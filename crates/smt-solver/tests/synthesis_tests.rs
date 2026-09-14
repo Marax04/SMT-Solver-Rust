@@ -144,6 +144,42 @@ fn test_equivalence_counterexample_model_extraction() {
 }
 
 #[test]
+fn test_equivalence_detailed_api_classification() {
+    use smt_solver::EquivalenceResult;
+
+    let mut sorts = SortArena::new();
+    let mut terms = TermArena::new(&mut sorts);
+    let bv32 = sorts.bv(32);
+    let bv64 = sorts.bv(64);
+    let x = terms.var("x", bv32);
+    let y = terms.var("y", bv32);
+    let z64 = terms.var("z64", bv64);
+
+    // 1. Equivalent case: (x ^ y) + 2*(x & y) <=> x + y
+    let xor_term = terms.bv_binop(Op::BvXor, x, y).unwrap();
+    let and_term = terms.bv_binop(Op::BvAnd, x, y).unwrap();
+    let two = terms.bv_const(2u32.into(), 32, &mut sorts);
+    let two_and = terms.bv_binop(Op::BvMul, two, and_term).unwrap();
+    let lhs = terms.bv_binop(Op::BvAdd, xor_term, two_and).unwrap();
+    let rhs = terms.bv_binop(Op::BvAdd, x, y).unwrap();
+
+    let eq_res =
+        IoProgramSynthesizer::verify_equivalence_detailed(lhs, rhs, &mut terms, &mut sorts);
+    assert_eq!(eq_res, EquivalenceResult::Equivalent);
+
+    // 2. NotEquivalent case: x + y <!=> x - y
+    let non_eq_rhs = terms.bv_binop(Op::BvSub, x, y).unwrap();
+    let non_eq_res =
+        IoProgramSynthesizer::verify_equivalence_detailed(lhs, non_eq_rhs, &mut terms, &mut sorts);
+    assert!(matches!(non_eq_res, EquivalenceResult::NotEquivalent(_)));
+
+    // 3. Error case: sort mismatch (bv32 vs bv64)
+    let err_res =
+        IoProgramSynthesizer::verify_equivalence_detailed(lhs, z64, &mut terms, &mut sorts);
+    assert!(matches!(err_res, EquivalenceResult::Error(_)));
+}
+
+#[test]
 fn test_smtlib_qf_bv_edge_cases_semantics() {
     use smt_solver::engine::Solver;
 

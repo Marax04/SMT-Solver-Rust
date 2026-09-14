@@ -238,6 +238,28 @@ impl ModelValidator {
                     Value::new_bv(va >> shift, wa)
                 }
             }
+            Op::BvAshr => {
+                let (va, wa) = self.eval_bv(term.args[0], model, terms, sorts)?;
+                let (vb, _) = self.eval_bv(term.args[1], model, terms, sorts)?;
+                let shift = vb.to_u32().unwrap_or(wa);
+                let sign_bit = (&va >> (wa - 1)) & BigUint::from(1u32);
+                let is_neg = sign_bit == BigUint::from(1u32);
+                if shift >= wa {
+                    if is_neg {
+                        let all_ones = (BigUint::from(1u32) << wa) - 1u32;
+                        Value::new_bv(all_ones, wa)
+                    } else {
+                        Value::new_bv(BigUint::zero(), wa)
+                    }
+                } else {
+                    let mut res = &va >> shift;
+                    if is_neg {
+                        let fill_mask = ((BigUint::from(1u32) << shift) - 1u32) << (wa - shift);
+                        res |= fill_mask;
+                    }
+                    Value::new_bv(res, wa)
+                }
+            }
             Op::BvConcat => {
                 let (va, wa) = self.eval_bv(term.args[0], model, terms, sorts)?;
                 let (vb, wb) = self.eval_bv(term.args[1], model, terms, sorts)?;

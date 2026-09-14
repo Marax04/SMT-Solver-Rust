@@ -35,6 +35,18 @@ pub struct DecodedInstruction {
     pub length: usize,
 }
 
+struct ModRmContext<'a> {
+    bytes: &'a [u8],
+    mode: u8,
+    rm_raw: u8,
+    rex_x: usize,
+    rex_b: usize,
+    width: u32,
+    has_rex: bool,
+    imm_len: usize,
+    inst_start_ip: u64,
+}
+
 /// Standalone x86-64 machine code decoder.
 pub struct X86Decoder;
 
@@ -48,6 +60,7 @@ impl X86Decoder {
         let mut offset = 0;
         let mut rex_w = false;
         let mut rex_r = 0usize;
+        let mut rex_x = 0usize;
         let mut rex_b = 0usize;
         let mut has_rex = false;
 
@@ -56,6 +69,7 @@ impl X86Decoder {
             let rex = bytes[offset];
             rex_w = (rex & 0x08) != 0;
             rex_r = if (rex & 0x04) != 0 { 8 } else { 0 };
+            rex_x = if (rex & 0x02) != 0 { 8 } else { 0 };
             rex_b = if (rex & 0x01) != 0 { 8 } else { 0 };
             has_rex = true;
             offset += 1;
@@ -90,6 +104,12 @@ impl X86Decoder {
             // RET
             0xc3 => Ok(DecodedInstruction {
                 instruction: IrInstruction::Jmp { target: 0 },
+                length: offset,
+            }),
+
+            // NOP (0x90)
+            0x90 => Ok(DecodedInstruction {
+                instruction: IrInstruction::Nop,
                 length: offset,
             }),
 
@@ -281,7 +301,8 @@ impl X86Decoder {
             }
 
             // Arithmetic and Logic with ModR/M
-            0x01 | 0x09 | 0x21 | 0x29 | 0x31 | 0x39 | 0x85 | 0x89 | 0x8b => {
+            0x01 | 0x03 | 0x09 | 0x0b | 0x21 | 0x23 | 0x29 | 0x2b | 0x31 | 0x33 | 0x39 | 0x3b
+            | 0x85 | 0x89 | 0x8b => {
                 if offset >= bytes.len() {
                     return Err("Missing ModR/M byte".to_string());
                 }
@@ -290,60 +311,90 @@ impl X86Decoder {
 
                 let mode = (modrm >> 6) & 3;
                 let reg_field = ((modrm >> 3) & 7) as usize + rex_r;
-                let rm_field = (modrm & 7) as usize + rex_b;
+                let rm_raw = modrm & 7;
 
-                if mode == 3 {
-                    // Direct register-register mode
-                    let r_reg = get_reg(reg_field, width);
-                    let rm_reg = get_reg(rm_field, width);
+                let r_reg = get_reg(reg_field, width);
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width,
+                    has_rex,
+                    imm_len: 0,
+                    inst_start_ip: ip,
+                };
+                let rm_op = Self::decode_rm(&ctx, &mut offset)?;
 
-                    let inst = match opcode {
-                        0x01 => IrInstruction::Add {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x09 => IrInstruction::Or {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x21 => IrInstruction::And {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x29 => IrInstruction::Sub {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x31 => IrInstruction::Xor {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x39 => IrInstruction::Cmp {
-                            left: rm_reg,
-                            right: r_reg,
-                        },
-                        0x85 => IrInstruction::Cmp {
-                            left: rm_reg,
-                            right: r_reg,
-                        }, // TEST
-                        0x89 => IrInstruction::Mov {
-                            dst: rm_reg,
-                            src: r_reg,
-                        },
-                        0x8b => IrInstruction::Mov {
-                            dst: r_reg,
-                            src: rm_reg,
-                        },
-                        _ => unreachable!(),
-                    };
+                let inst = match opcode {
+                    0x01 => IrInstruction::Add {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x03 => IrInstruction::Add {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    0x09 => IrInstruction::Or {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x0b => IrInstruction::Or {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    0x21 => IrInstruction::And {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x23 => IrInstruction::And {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    0x29 => IrInstruction::Sub {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x2b => IrInstruction::Sub {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    0x31 => IrInstruction::Xor {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x33 => IrInstruction::Xor {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    0x39 => IrInstruction::Cmp {
+                        left: rm_op,
+                        right: r_reg,
+                    },
+                    0x3b => IrInstruction::Cmp {
+                        left: r_reg,
+                        right: rm_op,
+                    },
+                    0x85 => IrInstruction::Cmp {
+                        left: rm_op,
+                        right: r_reg,
+                    }, // TEST
+                    0x89 => IrInstruction::Mov {
+                        dst: rm_op,
+                        src: r_reg,
+                    },
+                    0x8b => IrInstruction::Mov {
+                        dst: r_reg,
+                        src: rm_op,
+                    },
+                    _ => unreachable!(),
+                };
 
-                    Ok(DecodedInstruction {
-                        instruction: inst,
-                        length: offset,
-                    })
-                } else {
-                    Err(format!("Memory addressing mode {} not yet supported", mode))
-                }
+                Ok(DecodedInstruction {
+                    instruction: inst,
+                    length: offset,
+                })
             }
 
             // Group 1 immediate arithmetic (0x83 /reg rm, imm8)
@@ -356,57 +407,304 @@ impl X86Decoder {
 
                 let mode = (modrm >> 6) & 3;
                 let op_reg = (modrm >> 3) & 7;
-                let rm_field = (modrm & 7) as usize + rex_b;
+                let rm_raw = modrm & 7;
 
-                if mode == 3 {
-                    if offset >= bytes.len() {
-                        return Err("Missing imm8 byte for 0x83".to_string());
-                    }
-                    let imm8 = bytes[offset] as i8 as i64 as u64;
-                    offset += 1;
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width,
+                    has_rex,
+                    imm_len: 1,
+                    inst_start_ip: ip,
+                };
+                let target = Self::decode_rm(&ctx, &mut offset)?;
 
-                    let target = get_reg(rm_field, width);
-                    let imm_op = Operand::Imm(imm8, width);
-
-                    let inst = match op_reg {
-                        0 => IrInstruction::Add {
-                            dst: target,
-                            src: imm_op,
-                        },
-                        1 => IrInstruction::Or {
-                            dst: target,
-                            src: imm_op,
-                        },
-                        4 => IrInstruction::And {
-                            dst: target,
-                            src: imm_op,
-                        },
-                        5 => IrInstruction::Sub {
-                            dst: target,
-                            src: imm_op,
-                        },
-                        6 => IrInstruction::Xor {
-                            dst: target,
-                            src: imm_op,
-                        },
-                        7 => IrInstruction::Cmp {
-                            left: target,
-                            right: imm_op,
-                        },
-                        _ => return Err(format!("Unsupported 0x83 /{} op", op_reg)),
-                    };
-
-                    Ok(DecodedInstruction {
-                        instruction: inst,
-                        length: offset,
-                    })
-                } else {
-                    Err(format!("0x83 Memory addressing mode {} unsupported", mode))
+                if offset >= bytes.len() {
+                    return Err("Missing imm8 byte for 0x83".to_string());
                 }
+                let imm8 = bytes[offset] as i8 as i64 as u64;
+                offset += 1;
+                let imm_op = Operand::Imm(imm8, width);
+
+                let inst = match op_reg {
+                    0 => IrInstruction::Add {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    1 => IrInstruction::Or {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    4 => IrInstruction::And {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    5 => IrInstruction::Sub {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    6 => IrInstruction::Xor {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    7 => IrInstruction::Cmp {
+                        left: target,
+                        right: imm_op,
+                    },
+                    _ => return Err(format!("Unsupported 0x83 /{} op", op_reg)),
+                };
+
+                Ok(DecodedInstruction {
+                    instruction: inst,
+                    length: offset,
+                })
+            }
+
+            // Group 1 immediate arithmetic (0x81 /reg rm, imm32)
+            0x81 => {
+                if offset >= bytes.len() {
+                    return Err("Missing ModR/M byte for 0x81".to_string());
+                }
+                let modrm = bytes[offset];
+                offset += 1;
+
+                let mode = (modrm >> 6) & 3;
+                let op_reg = (modrm >> 3) & 7;
+                let rm_raw = modrm & 7;
+
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width,
+                    has_rex,
+                    imm_len: 4,
+                    inst_start_ip: ip,
+                };
+                let target = Self::decode_rm(&ctx, &mut offset)?;
+
+                if offset + 4 > bytes.len() {
+                    return Err("Missing imm32 for 0x81".to_string());
+                }
+                let imm32 = i32::from_le_bytes([
+                    bytes[offset],
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ]) as i64 as u64;
+                offset += 4;
+                let imm_op = Operand::Imm(imm32, width);
+
+                let inst = match op_reg {
+                    0 => IrInstruction::Add {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    1 => IrInstruction::Or {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    4 => IrInstruction::And {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    5 => IrInstruction::Sub {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    6 => IrInstruction::Xor {
+                        dst: target,
+                        src: imm_op,
+                    },
+                    7 => IrInstruction::Cmp {
+                        left: target,
+                        right: imm_op,
+                    },
+                    _ => return Err(format!("Unsupported 0x81 /{} op", op_reg)),
+                };
+
+                Ok(DecodedInstruction {
+                    instruction: inst,
+                    length: offset,
+                })
+            }
+
+            // MOV r/m, imm32 (0xC7 /0)
+            0xc7 => {
+                if offset >= bytes.len() {
+                    return Err("Missing ModR/M byte for 0xC7".to_string());
+                }
+                let modrm = bytes[offset];
+                offset += 1;
+
+                let mode = (modrm >> 6) & 3;
+                let op_reg = (modrm >> 3) & 7;
+                let rm_raw = modrm & 7;
+
+                if op_reg != 0 {
+                    return Err(format!(
+                        "Unsupported 0xC7 /{} op (only /0 MOV is supported)",
+                        op_reg
+                    ));
+                }
+
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width,
+                    has_rex,
+                    imm_len: 4,
+                    inst_start_ip: ip,
+                };
+                let target = Self::decode_rm(&ctx, &mut offset)?;
+
+                if offset + 4 > bytes.len() {
+                    return Err("Missing imm32 for 0xC7".to_string());
+                }
+                let imm32 = if width == 64 {
+                    i32::from_le_bytes([
+                        bytes[offset],
+                        bytes[offset + 1],
+                        bytes[offset + 2],
+                        bytes[offset + 3],
+                    ]) as i64 as u64
+                } else {
+                    u32::from_le_bytes([
+                        bytes[offset],
+                        bytes[offset + 1],
+                        bytes[offset + 2],
+                        bytes[offset + 3],
+                    ]) as u64
+                };
+                offset += 4;
+
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Mov {
+                        dst: target,
+                        src: Operand::Imm(imm32, width),
+                    },
+                    length: offset,
+                })
             }
 
             _ => Err(format!("Unsupported x86-64 opcode 0x{:02x}", opcode)),
         }
+    }
+
+    fn decode_rm(ctx: &ModRmContext<'_>, offset: &mut usize) -> Result<Operand, String> {
+        let get_reg = |idx: usize, w: u32| -> Operand {
+            match w {
+                64 => Operand::Reg(REGS_64[idx % 16].to_string(), 64),
+                32 => Operand::Reg(REGS_32[idx % 16].to_string(), 32),
+                16 => Operand::Reg(REGS_16[idx % 16].to_string(), 16),
+                8 => {
+                    if ctx.has_rex {
+                        Operand::Reg(REGS_8[idx % 16].to_string(), 8)
+                    } else if idx < 8 {
+                        Operand::Reg(REGS_8_LEGACY[idx].to_string(), 8)
+                    } else {
+                        Operand::Reg(REGS_8[idx % 16].to_string(), 8)
+                    }
+                }
+                _ => Operand::Reg(REGS_32[idx % 16].to_string(), 32),
+            }
+        };
+
+        if ctx.mode == 3 {
+            let reg_idx = (ctx.rm_raw as usize) + ctx.rex_b;
+            return Ok(get_reg(reg_idx, ctx.width));
+        }
+
+        let mut base_reg: Option<String> = None;
+        let mut index_reg: Option<(String, u8)> = None;
+        let mut disp: i64 = 0;
+
+        if (ctx.rm_raw & 7) == 4 {
+            if *offset >= ctx.bytes.len() {
+                return Err("Truncated SIB byte".to_string());
+            }
+            let sib = ctx.bytes[*offset];
+            *offset += 1;
+
+            let scale = 1u8 << ((sib >> 6) & 3);
+            let index_idx = (((sib >> 3) & 7) as usize) + ctx.rex_x;
+            let base_idx = ((sib & 7) as usize) + ctx.rex_b;
+
+            if index_idx != 4 {
+                index_reg = Some((REGS_64[index_idx % 16].to_string(), scale));
+            }
+
+            if (sib & 7) == 5 && ctx.mode == 0 {
+                if *offset + 4 > ctx.bytes.len() {
+                    return Err("Truncated disp32 in SIB".to_string());
+                }
+                disp = i32::from_le_bytes([
+                    ctx.bytes[*offset],
+                    ctx.bytes[*offset + 1],
+                    ctx.bytes[*offset + 2],
+                    ctx.bytes[*offset + 3],
+                ]) as i64;
+                *offset += 4;
+            } else {
+                base_reg = Some(REGS_64[base_idx % 16].to_string());
+            }
+        } else if ctx.mode == 0 && (ctx.rm_raw & 7) == 5 {
+            if *offset + 4 > ctx.bytes.len() {
+                return Err("Truncated RIP-relative disp32".to_string());
+            }
+            let rel32 = i32::from_le_bytes([
+                ctx.bytes[*offset],
+                ctx.bytes[*offset + 1],
+                ctx.bytes[*offset + 2],
+                ctx.bytes[*offset + 3],
+            ]) as i64;
+            *offset += 4;
+            let next_ip = ctx.inst_start_ip + (*offset + ctx.imm_len) as u64;
+            let target = (next_ip as i64 + rel32) as u64;
+            return Ok(Operand::Mem {
+                base: None,
+                index: None,
+                disp: target as i64,
+                width: ctx.width,
+            });
+        } else {
+            let base_idx = (ctx.rm_raw as usize) + ctx.rex_b;
+            base_reg = Some(REGS_64[base_idx % 16].to_string());
+        }
+
+        if ctx.mode == 1 {
+            if *offset >= ctx.bytes.len() {
+                return Err("Truncated disp8".to_string());
+            }
+            disp = ctx.bytes[*offset] as i8 as i64;
+            *offset += 1;
+        } else if ctx.mode == 2 {
+            if *offset + 4 > ctx.bytes.len() {
+                return Err("Truncated disp32".to_string());
+            }
+            disp = i32::from_le_bytes([
+                ctx.bytes[*offset],
+                ctx.bytes[*offset + 1],
+                ctx.bytes[*offset + 2],
+                ctx.bytes[*offset + 3],
+            ]) as i64;
+            *offset += 4;
+        }
+
+        Ok(Operand::Mem {
+            base: base_reg,
+            index: index_reg,
+            disp,
+            width: ctx.width,
+        })
     }
 
     /// Decodes a contiguous sequence of machine code bytes into a BasicBlock until a terminator is met.

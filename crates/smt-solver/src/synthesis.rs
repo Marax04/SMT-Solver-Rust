@@ -106,7 +106,22 @@ impl IoProgramSynthesizer {
 
         None
     }
+}
 
+/// Diagnostic classification of symbolic program equivalence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EquivalenceResult {
+    /// Formally proven equivalent (negation is certified UNSAT).
+    Equivalent,
+    /// Non-equivalent: counterexample model witnesses diverging evaluation.
+    NotEquivalent(Model),
+    /// Inconclusive due to theory incompleteness, timeouts, or resource limits.
+    Unknown(String),
+    /// Typo, sort mismatch, or structural error during query formulation.
+    Error(String),
+}
+
+impl IoProgramSynthesizer {
     /// Verifies that `a <=> b` for all inputs using an SMT oracle (asserting a != b is UNSAT).
     /// Scales to arbitrary bit-widths (e.g. 32-bit, 64-bit registers) where truth table enumeration is impossible.
     pub fn verify_equivalence(
@@ -115,18 +130,32 @@ impl IoProgramSynthesizer {
         terms: &mut TermArena,
         sorts: &mut SortArena,
     ) -> bool {
-        Self::verify_equivalence_with_counterexample(a, b, terms, sorts).is_ok()
+        matches!(
+            Self::verify_equivalence_detailed(a, b, terms, sorts),
+            EquivalenceResult::Equivalent
+        )
     }
 
-    /// Formally checks equivalence `a <=> b`.
-    /// - If equivalent, returns `Ok(())` (certified UNSAT for distinct(a, b)).
-    /// - If non-equivalent, returns `Err(counterexample)` with concrete variable assignments disproving equivalence.
-    pub fn verify_equivalence_with_counterexample(
+    /// Formally checks equivalence `a <=> b` returning a typed diagnostic result.
+    /// - `EquivalenceResult::Equivalent`: Certified UNSAT for distinct(a, b).
+    /// - `EquivalenceResult::NotEquivalent(model)`: Certified SAT with counterexample model disproving equivalence.
+    /// - `EquivalenceResult::Unknown(reason)`: Inconclusive.
+    /// - `EquivalenceResult::Error(msg)`: Sort mismatch or structural error.
+    pub fn verify_equivalence_detailed(
         a: TermId,
         b: TermId,
         terms: &mut TermArena,
         sorts: &mut SortArena,
-    ) -> Result<(), Model> {
+    ) -> EquivalenceResult {
+        let sort_a = terms.sort_of(a);
+        let sort_b = terms.sort_of(b);
+        if sort_a != sort_b {
+            return EquivalenceResult::Error(format!(
+                "Sort mismatch in equivalence query: sort(a)={:?}, sort(b)={:?}",
+                sort_a, sort_b
+            ));
+        }
+
         let mut solver = Solver::new();
         solver.sorts = sorts.clone();
         solver.terms = terms.clone();
@@ -149,12 +178,46 @@ impl IoProgramSynthesizer {
         let neq = solver.terms.distinct(vec![a, b], &solver.sorts);
         solver.assert_formula(neq);
         match solver.check_sat() {
-            CheckSatResult::Unsat => Ok(()),
+            CheckSatResult::Unsat => EquivalenceResult::Equivalent,
             CheckSatResult::Sat => {
                 let model = solver.get_model().cloned().unwrap_or_default();
-                Err(model)
+                let mut validator = ModelValidator::new();
+                match (
+                    validator.evaluate(a, &model, &solver.terms, &solver.sorts),
+                    validator.evaluate(b, &model, &solver.terms, &solver.sorts),
+                ) {
+                    (Ok(val_a), Ok(val_b)) => {
+                        if val_a != val_b {
+                            EquivalenceResult::NotEquivalent(model)
+                        } else {
+                            EquivalenceResult::Unknown(
+                                "Model extraction produced identical evaluations for distinct query"
+                                    .to_string(),
+                            )
+                        }
+                    }
+                    _ => EquivalenceResult::NotEquivalent(model),
+                }
             }
-            CheckSatResult::Unknown => Err(solver.get_model().cloned().unwrap_or_default()),
+            CheckSatResult::Unknown => {
+                EquivalenceResult::Unknown("SMT solver returned Unknown".to_string())
+            }
+        }
+    }
+
+    /// Formally checks equivalence `a <=> b`.
+    /// - If equivalent, returns `Ok(())` (certified UNSAT for distinct(a, b)).
+    /// - If non-equivalent, returns `Err(counterexample)` with concrete variable assignments disproving equivalence.
+    pub fn verify_equivalence_with_counterexample(
+        a: TermId,
+        b: TermId,
+        terms: &mut TermArena,
+        sorts: &mut SortArena,
+    ) -> Result<(), Model> {
+        match Self::verify_equivalence_detailed(a, b, terms, sorts) {
+            EquivalenceResult::Equivalent => Ok(()),
+            EquivalenceResult::NotEquivalent(model) => Err(model),
+            EquivalenceResult::Unknown(_) | EquivalenceResult::Error(_) => Err(Model::new()),
         }
     }
 

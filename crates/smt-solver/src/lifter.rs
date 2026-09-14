@@ -17,6 +17,13 @@ pub enum Operand {
     Reg(String, u32),
     /// Immediate constant value with bit width.
     Imm(u64, u32),
+    /// Memory operand: [base + index*scale + disp] with bit width.
+    Mem {
+        base: Option<String>,
+        index: Option<(String, u8)>,
+        disp: i64,
+        width: u32,
+    },
 }
 
 /// Conditional branch predicates for control flow transfer.
@@ -43,6 +50,7 @@ pub enum BranchCondition {
 /// Basic IR instructions lifted from machine code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrInstruction {
+    Nop,
     Mov {
         dst: Operand,
         src: Operand,
@@ -103,7 +111,8 @@ impl IrInstruction {
                     None
                 }
             }
-            IrInstruction::Push { .. }
+            IrInstruction::Nop
+            | IrInstruction::Push { .. }
             | IrInstruction::Cmp { .. }
             | IrInstruction::Jcc { .. }
             | IrInstruction::Jmp { .. } => None,
@@ -111,39 +120,51 @@ impl IrInstruction {
     }
 
     pub fn use_regs(&self) -> Vec<&str> {
+        fn add_op<'b>(op: &'b Operand, regs: &mut Vec<&'b str>) {
+            match op {
+                Operand::Reg(name, _) => regs.push(name.as_str()),
+                Operand::Mem { base, index, .. } => {
+                    if let Some(ref b) = base {
+                        regs.push(b.as_str());
+                    }
+                    if let Some((ref idx_reg, _)) = index {
+                        regs.push(idx_reg.as_str());
+                    }
+                }
+                Operand::Imm(..) => {}
+            }
+        }
+
         let mut regs = Vec::new();
         match self {
-            IrInstruction::Mov { src, .. } => {
-                if let Operand::Reg(ref name, _) = src {
-                    regs.push(name.as_str());
+            IrInstruction::Nop => {}
+            IrInstruction::Mov { dst, src } => {
+                if matches!(dst, Operand::Mem { .. }) {
+                    add_op(dst, &mut regs);
                 }
+                add_op(src, &mut regs);
             }
             IrInstruction::Add { dst, src }
             | IrInstruction::Sub { dst, src }
             | IrInstruction::Xor { dst, src }
             | IrInstruction::And { dst, src }
             | IrInstruction::Or { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
-                    regs.push(name.as_str());
-                }
-                if let Operand::Reg(ref name, _) = src {
-                    regs.push(name.as_str());
-                }
+                add_op(dst, &mut regs);
+                add_op(src, &mut regs);
             }
             IrInstruction::Cmp { left, right } => {
-                if let Operand::Reg(ref name, _) = left {
-                    regs.push(name.as_str());
-                }
-                if let Operand::Reg(ref name, _) = right {
-                    regs.push(name.as_str());
-                }
+                add_op(left, &mut regs);
+                add_op(right, &mut regs);
             }
             IrInstruction::Push { src } => {
-                if let Operand::Reg(ref name, _) = src {
-                    regs.push(name.as_str());
+                add_op(src, &mut regs);
+            }
+            IrInstruction::Pop { dst } => {
+                if matches!(dst, Operand::Mem { .. }) {
+                    add_op(dst, &mut regs);
                 }
             }
-            IrInstruction::Pop { .. } | IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}
+            IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}
         }
         regs
     }
@@ -370,6 +391,13 @@ pub fn canonical_reg_mapping(name: &str) -> Option<(&'static str, u32, u32)> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MemoryAddress {
+    Physical(u64),
+    Stack(i64),
+    Named(String, i64),
+}
+
 #[derive(Clone)]
 struct SavedScope {
     reg_state: HashMap<String, TermId>,
@@ -378,6 +406,9 @@ struct SavedScope {
     sign_flag: Option<TermId>,
     overflow_flag: Option<TermId>,
     stack: Vec<TermId>,
+    memory: HashMap<u64, TermId>,
+    stack_memory: HashMap<i64, TermId>,
+    named_memory: HashMap<(String, i64), TermId>,
 }
 
 /// Symbolic lifter and path condition analyzer.
@@ -390,6 +421,9 @@ pub struct Lifter {
     sign_flag: Option<TermId>,
     overflow_flag: Option<TermId>,
     stack: Vec<TermId>,
+    memory: HashMap<u64, TermId>,
+    stack_memory: HashMap<i64, TermId>,
+    named_memory: HashMap<(String, i64), TermId>,
     scope_stack: Vec<SavedScope>,
 }
 
@@ -402,21 +436,27 @@ impl Default for Lifter {
 impl Lifter {
     pub fn new() -> Self {
         let mut sorts = SortArena::new();
-        let terms = TermArena::new(&mut sorts);
+        let mut terms = TermArena::new(&mut sorts);
+        let mut reg_state = HashMap::new();
+        let initial_rsp = terms.bv_const(0x7fff_ffff_0000u64.into(), 64, &mut sorts);
+        reg_state.insert("rsp".to_string(), initial_rsp);
         Self {
             sorts,
             terms,
-            reg_state: HashMap::new(),
+            reg_state,
             zero_flag: None,
             carry_flag: None,
             sign_flag: None,
             overflow_flag: None,
             stack: Vec::new(),
+            memory: HashMap::new(),
+            stack_memory: HashMap::new(),
+            named_memory: HashMap::new(),
             scope_stack: Vec::new(),
         }
     }
 
-    /// Pushes current symbolic register and flag states onto the scope stack.
+    /// Pushes current symbolic register, flag, and memory states onto the scope stack.
     pub fn push(&mut self) {
         self.scope_stack.push(SavedScope {
             reg_state: self.reg_state.clone(),
@@ -425,6 +465,9 @@ impl Lifter {
             sign_flag: self.sign_flag,
             overflow_flag: self.overflow_flag,
             stack: self.stack.clone(),
+            memory: self.memory.clone(),
+            stack_memory: self.stack_memory.clone(),
+            named_memory: self.named_memory.clone(),
         });
     }
 
@@ -437,6 +480,9 @@ impl Lifter {
             self.sign_flag = saved.sign_flag;
             self.overflow_flag = saved.overflow_flag;
             self.stack = saved.stack;
+            self.memory = saved.memory;
+            self.stack_memory = saved.stack_memory;
+            self.named_memory = saved.named_memory;
             true
         } else {
             false
@@ -571,11 +617,181 @@ impl Lifter {
         }
     }
 
+    /// Evaluates whether a term is a concrete integer constant or simple constant arithmetic.
+    pub fn eval_concrete_u64(&self, term: TermId) -> Option<u64> {
+        use num_traits::ToPrimitive;
+        let t = self.terms.get(term);
+        match &t.op {
+            Op::BvConst { value, .. } => value.to_u64(),
+            Op::BvAdd if t.args.len() == 2 => {
+                let a = self.eval_concrete_u64(t.args[0])?;
+                let b = self.eval_concrete_u64(t.args[1])?;
+                Some(a.wrapping_add(b))
+            }
+            Op::BvSub if t.args.len() == 2 => {
+                let a = self.eval_concrete_u64(t.args[0])?;
+                let b = self.eval_concrete_u64(t.args[1])?;
+                Some(a.wrapping_sub(b))
+            }
+            Op::BvMul if t.args.len() == 2 => {
+                let a = self.eval_concrete_u64(t.args[0])?;
+                let b = self.eval_concrete_u64(t.args[1])?;
+                Some(a.wrapping_mul(b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolves the effective memory address from base register, index register, and displacement.
+    pub fn resolve_address(
+        &mut self,
+        base: &Option<String>,
+        index: &Option<(String, u8)>,
+        disp: i64,
+    ) -> MemoryAddress {
+        let index_offset = if let Some((ref idx_reg, scale)) = index {
+            let idx_term = self.read_reg(idx_reg, 64);
+            if let Some(concrete_idx) = self.eval_concrete_u64(idx_term) {
+                (concrete_idx.wrapping_mul(*scale as u64)) as i64
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        if let Some(ref base_reg) = base {
+            let base_term = self.read_reg(base_reg, 64);
+            if let Some(concrete_base) = self.eval_concrete_u64(base_term) {
+                let effective = (concrete_base as i64)
+                    .wrapping_add(index_offset)
+                    .wrapping_add(disp) as u64;
+                MemoryAddress::Physical(effective)
+            } else if base_reg == "rsp" {
+                MemoryAddress::Stack(disp + index_offset)
+            } else {
+                MemoryAddress::Named(base_reg.clone(), disp + index_offset)
+            }
+        } else {
+            MemoryAddress::Physical((disp + index_offset) as u64)
+        }
+    }
+
+    fn read_byte_at(&mut self, addr: &MemoryAddress, byte_offset: i64) -> TermId {
+        match addr {
+            MemoryAddress::Physical(phys) => {
+                let target = phys.wrapping_add(byte_offset as u64);
+                if let Some(&t) = self.memory.get(&target) {
+                    t
+                } else {
+                    let sort8 = self.sorts.bv(8);
+                    let var = self.terms.var(format!("uninit_mem_{:x}", target), sort8);
+                    self.memory.insert(target, var);
+                    var
+                }
+            }
+            MemoryAddress::Stack(stack_off) => {
+                let target = stack_off + byte_offset;
+                if let Some(&t) = self.stack_memory.get(&target) {
+                    t
+                } else {
+                    let sort8 = self.sorts.bv(8);
+                    let var = self.terms.var(format!("uninit_stack_{}", target), sort8);
+                    self.stack_memory.insert(target, var);
+                    var
+                }
+            }
+            MemoryAddress::Named(name, base_off) => {
+                let target = (name.clone(), base_off + byte_offset);
+                if let Some(&t) = self.named_memory.get(&target) {
+                    t
+                } else {
+                    let sort8 = self.sorts.bv(8);
+                    let var = self
+                        .terms
+                        .var(format!("uninit_{}_{}", target.0, target.1), sort8);
+                    self.named_memory.insert(target, var);
+                    var
+                }
+            }
+        }
+    }
+
+    fn write_byte_at(&mut self, addr: &MemoryAddress, byte_offset: i64, val: TermId) {
+        match addr {
+            MemoryAddress::Physical(phys) => {
+                let target = phys.wrapping_add(byte_offset as u64);
+                self.memory.insert(target, val);
+            }
+            MemoryAddress::Stack(stack_off) => {
+                let target = stack_off + byte_offset;
+                self.stack_memory.insert(target, val);
+            }
+            MemoryAddress::Named(name, base_off) => {
+                let target = (name.clone(), base_off + byte_offset);
+                self.named_memory.insert(target, val);
+            }
+        }
+    }
+
+    /// Reads a memory operand with proper little-endian byte assembly.
+    pub fn read_memory(&mut self, op: &Operand) -> TermId {
+        let (base, index, disp, width) = match op {
+            Operand::Mem {
+                base,
+                index,
+                disp,
+                width,
+            } => (base.clone(), index.clone(), *disp, *width),
+            _ => panic!("Expected Operand::Mem in read_memory"),
+        };
+        let addr = self.resolve_address(&base, &index, disp);
+        let byte_count = (width / 8).max(1) as usize;
+        let mut bytes = Vec::with_capacity(byte_count);
+        for i in 0..byte_count {
+            bytes.push(self.read_byte_at(&addr, i as i64));
+        }
+
+        let mut acc = bytes[0];
+        for &b in &bytes[1..] {
+            acc = self
+                .terms
+                .bv_concat(b, acc, &mut self.sorts)
+                .expect("Valid little-endian byte concat");
+        }
+        acc
+    }
+
+    /// Writes a value to a memory operand with little-endian byte slicing.
+    pub fn write_memory(&mut self, op: &Operand, val: TermId) {
+        let (base, index, disp, width) = match op {
+            Operand::Mem {
+                base,
+                index,
+                disp,
+                width,
+            } => (base.clone(), index.clone(), *disp, *width),
+            _ => panic!("Expected Operand::Mem in write_memory"),
+        };
+        let addr = self.resolve_address(&base, &index, disp);
+        let byte_count = (width / 8).max(1) as usize;
+        for i in 0..byte_count {
+            let low = (i * 8) as u32;
+            let high = low + 7;
+            let byte_val = self
+                .terms
+                .bv_extract(high, low, val, &mut self.sorts)
+                .expect("Valid byte extract");
+            self.write_byte_at(&addr, i as i64, byte_val);
+        }
+    }
+
     /// Gets or creates the symbolic term for an operand.
     pub fn eval_operand(&mut self, op: &Operand) -> TermId {
         match op {
             Operand::Reg(name, width) => self.read_reg(name, *width),
             Operand::Imm(val, width) => self.terms.bv_const((*val).into(), *width, &mut self.sorts),
+            Operand::Mem { .. } => self.read_memory(op),
         }
     }
 
@@ -675,59 +891,72 @@ impl Lifter {
         }
     }
 
-    /// Executes a single instruction symbolically, updating internal register and flag states.
+    /// Executes a single instruction symbolically, updating internal register, flag, and memory states.
     pub fn step(&mut self, inst: &IrInstruction) {
         match inst {
+            IrInstruction::Nop => {}
             IrInstruction::Mov { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let src_term = self.eval_operand(src);
-                    self.write_reg(name, src_term, *width);
+                let src_term = self.eval_operand(src);
+                match dst {
+                    Operand::Reg(ref name, width) => self.write_reg(name, src_term, *width),
+                    Operand::Mem { .. } => self.write_memory(dst, src_term),
+                    Operand::Imm(..) => {}
                 }
             }
             IrInstruction::Add { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let d = self.eval_operand(dst);
-                    let s = self.eval_operand(src);
-                    if let Ok(res) = self.terms.bv_binop(Op::BvAdd, d, s) {
-                        self.write_reg(name, res, *width);
-                        self.update_add_flags(d, s, res);
+                let d = self.eval_operand(dst);
+                let s = self.eval_operand(src);
+                if let Ok(res) = self.terms.bv_binop(Op::BvAdd, d, s) {
+                    match dst {
+                        Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
+                        Operand::Mem { .. } => self.write_memory(dst, res),
+                        Operand::Imm(..) => {}
                     }
+                    self.update_add_flags(d, s, res);
                 }
             }
             IrInstruction::Sub { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let d = self.eval_operand(dst);
-                    let s = self.eval_operand(src);
-                    if let Ok(res) = self.terms.bv_binop(Op::BvSub, d, s) {
-                        self.write_reg(name, res, *width);
-                        self.update_sub_flags(d, s);
+                let d = self.eval_operand(dst);
+                let s = self.eval_operand(src);
+                if let Ok(res) = self.terms.bv_binop(Op::BvSub, d, s) {
+                    match dst {
+                        Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
+                        Operand::Mem { .. } => self.write_memory(dst, res),
+                        Operand::Imm(..) => {}
                     }
+                    self.update_sub_flags(d, s);
                 }
             }
             IrInstruction::Xor { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let d = self.eval_operand(dst);
-                    let s = self.eval_operand(src);
-                    if let Ok(res) = self.terms.bv_binop(Op::BvXor, d, s) {
-                        self.write_reg(name, res, *width);
+                let d = self.eval_operand(dst);
+                let s = self.eval_operand(src);
+                if let Ok(res) = self.terms.bv_binop(Op::BvXor, d, s) {
+                    match dst {
+                        Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
+                        Operand::Mem { .. } => self.write_memory(dst, res),
+                        Operand::Imm(..) => {}
                     }
                 }
             }
             IrInstruction::And { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let d = self.eval_operand(dst);
-                    let s = self.eval_operand(src);
-                    if let Ok(res) = self.terms.bv_binop(Op::BvAnd, d, s) {
-                        self.write_reg(name, res, *width);
+                let d = self.eval_operand(dst);
+                let s = self.eval_operand(src);
+                if let Ok(res) = self.terms.bv_binop(Op::BvAnd, d, s) {
+                    match dst {
+                        Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
+                        Operand::Mem { .. } => self.write_memory(dst, res),
+                        Operand::Imm(..) => {}
                     }
                 }
             }
             IrInstruction::Or { dst, src } => {
-                if let Operand::Reg(ref name, width) = dst {
-                    let d = self.eval_operand(dst);
-                    let s = self.eval_operand(src);
-                    if let Ok(res) = self.terms.bv_binop(Op::BvOr, d, s) {
-                        self.write_reg(name, res, *width);
+                let d = self.eval_operand(dst);
+                let s = self.eval_operand(src);
+                if let Ok(res) = self.terms.bv_binop(Op::BvOr, d, s) {
+                    match dst {
+                        Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
+                        Operand::Mem { .. } => self.write_memory(dst, res),
+                        Operand::Imm(..) => {}
                     }
                 }
             }
@@ -738,26 +967,38 @@ impl Lifter {
             }
             IrInstruction::Push { src } => {
                 let val = self.eval_operand(src);
-                self.stack.push(val);
                 let rsp_val = self.read_reg("rsp", 64);
                 let eight = self.terms.bv_const(8u32.into(), 64, &mut self.sorts);
                 if let Ok(new_rsp) = self.terms.bv_binop(Op::BvSub, rsp_val, eight) {
                     self.write_reg("rsp", new_rsp, 64);
                 }
+                let mem_op = Operand::Mem {
+                    base: Some("rsp".to_string()),
+                    index: None,
+                    disp: 0,
+                    width: 64,
+                };
+                self.write_memory(&mem_op, val);
+                self.stack.push(val);
             }
             IrInstruction::Pop { dst } => {
-                let val = if let Some(v) = self.stack.pop() {
-                    v
-                } else {
-                    self.init_register("uninit_stack", 64)
+                let mem_op = Operand::Mem {
+                    base: Some("rsp".to_string()),
+                    index: None,
+                    disp: 0,
+                    width: 64,
                 };
-                if let Operand::Reg(ref name, width) = dst {
-                    self.write_reg(name, val, *width);
-                }
+                let val = self.read_memory(&mem_op);
                 let rsp_val = self.read_reg("rsp", 64);
                 let eight = self.terms.bv_const(8u32.into(), 64, &mut self.sorts);
                 if let Ok(new_rsp) = self.terms.bv_binop(Op::BvAdd, rsp_val, eight) {
                     self.write_reg("rsp", new_rsp, 64);
+                }
+                self.stack.pop();
+                match dst {
+                    Operand::Reg(ref name, width) => self.write_reg(name, val, *width),
+                    Operand::Mem { .. } => self.write_memory(dst, val),
+                    Operand::Imm(..) => {}
                 }
             }
             IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}

@@ -23,6 +23,6 @@ pub use opaque::{
     TraceBranch,
 };
 pub use stats::SolverMetrics;
-pub use synthesis::{Gf2LinearMbaSimplifier, IoProgramSynthesizer};
+pub use synthesis::{EquivalenceResult, Gf2LinearMbaSimplifier, IoProgramSynthesizer};
 pub use validator::ModelValidator;
 pub use x86_decoder::{DecodedInstruction, X86Decoder};

@@ -233,14 +233,15 @@ fn test_x86_all_16_branch_conditions_certified() {
 }
 
 #[test]
-fn test_x86_tigress_opaque_dispatch_byte_decoder_and_smt_refutation() {
-    // Real x86-64 machine code bytes representing a Tigress / OLLVM opaque dispatch:
+fn test_x86_synthetic_opaque_dispatch_byte_decoder_and_smt_refutation() {
+    // Synthetic benchmark: simplified x86-64 machine code sequence imitating
+    // Tigress / OLLVM style constant-folding opaque dispatch:
     //
     // 0x401000: 48 b8 37 13 00 00 00 00 00 00    movabs rax, 0x1337
     // 0x40100a: 48 89 c3                         mov rbx, rax
     // 0x40100d: 48 29 d8                         sub rax, rbx       ; rax = 0, ZF = 1
     // 0x401010: 48 83 f8 00                      cmp rax, 0         ; redundant comparison
-    // 0x401014: 75 08                            jne +8 (0x40101e)  ; Opaque predicate! Never taken!
+    // 0x401014: 75 08                            jne +8 (0x40101e)  ; Synthetic invariant branch! Never taken!
     let bytes = [
         0x48, 0xb8, 0x37, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rax, 0x1337
         0x48, 0x89, 0xc3, // mov rbx, rax

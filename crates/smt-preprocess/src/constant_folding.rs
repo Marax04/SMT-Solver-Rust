@@ -275,6 +275,32 @@ impl<'a> ConstantFolder<'a> {
                     return self.terms.bv_const(res, w1, self.sorts);
                 }
             }
+            Op::BvAshr => {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
+                    let shift = v2.to_usize().unwrap_or(w1 as usize);
+                    let sign_bit = (&v1 >> (w1 - 1)) & BigUint::from(1u32);
+                    let is_neg = sign_bit == BigUint::from(1u32);
+                    let res = if shift >= w1 as usize {
+                        if is_neg {
+                            bv_mask(w1)
+                        } else {
+                            BigUint::zero()
+                        }
+                    } else {
+                        let mut r = (v1 >> shift) & bv_mask(w1);
+                        if is_neg {
+                            let fill =
+                                ((BigUint::from(1u32) << shift) - 1u32) << (w1 as usize - shift);
+                            r = (r | fill) & bv_mask(w1);
+                        }
+                        r
+                    };
+                    return self.terms.bv_const(res, w1, self.sorts);
+                }
+            }
             Op::BvConcat => {
                 if let (Some((v1, w1)), Some((v2, w2))) = (
                     self.as_bv_const(folded_args[0]),
