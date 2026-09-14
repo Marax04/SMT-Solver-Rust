@@ -26,8 +26,18 @@ pub enum BranchCondition {
     NotEqual,
     Zero,
     NotZero,
-    UnsignedLess,
-    UnsignedGreaterEqual,
+    BelowUnsigned,
+    AboveOrEqualUnsigned,
+    BelowOrEqualUnsigned,
+    AboveUnsigned,
+    LessThanSigned,
+    GreaterOrEqualSigned,
+    LessOrEqualSigned,
+    GreaterThanSigned,
+    Sign,
+    NotSign,
+    Overflow,
+    NotOverflow,
 }
 
 /// Basic IR instructions lifted from machine code.
@@ -61,6 +71,12 @@ pub enum IrInstruction {
         left: Operand,
         right: Operand,
     },
+    Push {
+        src: Operand,
+    },
+    Pop {
+        dst: Operand,
+    },
     Jcc {
         cond: BranchCondition,
         target_true: u64,
@@ -79,16 +95,18 @@ impl IrInstruction {
             | IrInstruction::Sub { dst, .. }
             | IrInstruction::Xor { dst, .. }
             | IrInstruction::And { dst, .. }
-            | IrInstruction::Or { dst, .. } => {
+            | IrInstruction::Or { dst, .. }
+            | IrInstruction::Pop { dst } => {
                 if let Operand::Reg(ref name, _) = dst {
                     Some(name.as_str())
                 } else {
                     None
                 }
             }
-            IrInstruction::Cmp { .. } | IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {
-                None
-            }
+            IrInstruction::Push { .. }
+            | IrInstruction::Cmp { .. }
+            | IrInstruction::Jcc { .. }
+            | IrInstruction::Jmp { .. } => None,
         }
     }
 
@@ -120,7 +138,12 @@ impl IrInstruction {
                     regs.push(name.as_str());
                 }
             }
-            IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}
+            IrInstruction::Push { src } => {
+                if let Operand::Reg(ref name, _) = src {
+                    regs.push(name.as_str());
+                }
+            }
+            IrInstruction::Pop { .. } | IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}
         }
         regs
     }
@@ -217,13 +240,157 @@ pub struct ProofCarryingResolution {
     pub false_branch_model: Option<crate::model::Model>,
 }
 
+/// Returns the corresponding 32-bit subregister name for a canonical 64-bit root register.
+pub fn subregister_32_name(root: &str) -> Option<&'static str> {
+    match root {
+        "rax" => Some("eax"),
+        "rcx" => Some("ecx"),
+        "rdx" => Some("edx"),
+        "rbx" => Some("ebx"),
+        "rsp" => Some("esp"),
+        "rbp" => Some("ebp"),
+        "rsi" => Some("esi"),
+        "rdi" => Some("edi"),
+        "r8" => Some("r8d"),
+        "r9" => Some("r9d"),
+        "r10" => Some("r10d"),
+        "r11" => Some("r11d"),
+        "r12" => Some("r12d"),
+        "r13" => Some("r13d"),
+        "r14" => Some("r14d"),
+        "r15" => Some("r15d"),
+        _ => None,
+    }
+}
+
+/// Maps x86-64 register names to their canonical 64-bit root register, bit offset, and width.
+pub fn canonical_reg_mapping(name: &str) -> Option<(&'static str, u32, u32)> {
+    match name {
+        // RAX family
+        "rax" => Some(("rax", 0, 64)),
+        "eax" => Some(("rax", 0, 32)),
+        "ax" => Some(("rax", 0, 16)),
+        "al" => Some(("rax", 0, 8)),
+        "ah" => Some(("rax", 8, 8)),
+
+        // RCX family
+        "rcx" => Some(("rcx", 0, 64)),
+        "ecx" => Some(("rcx", 0, 32)),
+        "cx" => Some(("rcx", 0, 16)),
+        "cl" => Some(("rcx", 0, 8)),
+        "ch" => Some(("rcx", 8, 8)),
+
+        // RDX family
+        "rdx" => Some(("rdx", 0, 64)),
+        "edx" => Some(("rdx", 0, 32)),
+        "dx" => Some(("rdx", 0, 16)),
+        "dl" => Some(("rdx", 0, 8)),
+        "dh" => Some(("rdx", 8, 8)),
+
+        // RBX family
+        "rbx" => Some(("rbx", 0, 64)),
+        "ebx" => Some(("rbx", 0, 32)),
+        "bx" => Some(("rbx", 0, 16)),
+        "bl" => Some(("rbx", 0, 8)),
+        "bh" => Some(("rbx", 8, 8)),
+
+        // RSP family
+        "rsp" => Some(("rsp", 0, 64)),
+        "esp" => Some(("rsp", 0, 32)),
+        "sp" => Some(("rsp", 0, 16)),
+        "spl" => Some(("rsp", 0, 8)),
+
+        // RBP family
+        "rbp" => Some(("rbp", 0, 64)),
+        "ebp" => Some(("rbp", 0, 32)),
+        "bp" => Some(("rbp", 0, 16)),
+        "bpl" => Some(("rbp", 0, 8)),
+
+        // RSI family
+        "rsi" => Some(("rsi", 0, 64)),
+        "esi" => Some(("rsi", 0, 32)),
+        "si" => Some(("rsi", 0, 16)),
+        "sil" => Some(("rsi", 0, 8)),
+
+        // RDI family
+        "rdi" => Some(("rdi", 0, 64)),
+        "edi" => Some(("rdi", 0, 32)),
+        "di" => Some(("rdi", 0, 16)),
+        "dil" => Some(("rdi", 0, 8)),
+
+        // R8 family
+        "r8" => Some(("r8", 0, 64)),
+        "r8d" => Some(("r8", 0, 32)),
+        "r8w" => Some(("r8", 0, 16)),
+        "r8b" => Some(("r8", 0, 8)),
+
+        // R9 family
+        "r9" => Some(("r9", 0, 64)),
+        "r9d" => Some(("r9", 0, 32)),
+        "r9w" => Some(("r9", 0, 16)),
+        "r9b" => Some(("r9", 0, 8)),
+
+        // R10 family
+        "r10" => Some(("r10", 0, 64)),
+        "r10d" => Some(("r10", 0, 32)),
+        "r10w" => Some(("r10", 0, 16)),
+        "r10b" => Some(("r10", 0, 8)),
+
+        // R11 family
+        "r11" => Some(("r11", 0, 64)),
+        "r11d" => Some(("r11", 0, 32)),
+        "r11w" => Some(("r11", 0, 16)),
+        "r11b" => Some(("r11", 0, 8)),
+
+        // R12 family
+        "r12" => Some(("r12", 0, 64)),
+        "r12d" => Some(("r12", 0, 32)),
+        "r12w" => Some(("r12", 0, 16)),
+        "r12b" => Some(("r12", 0, 8)),
+
+        // R13 family
+        "r13" => Some(("r13", 0, 64)),
+        "r13d" => Some(("r13", 0, 32)),
+        "r13w" => Some(("r13", 0, 16)),
+        "r13b" => Some(("r13", 0, 8)),
+
+        // R14 family
+        "r14" => Some(("r14", 0, 64)),
+        "r14d" => Some(("r14", 0, 32)),
+        "r14w" => Some(("r14", 0, 16)),
+        "r14b" => Some(("r14", 0, 8)),
+
+        // R15 family
+        "r15" => Some(("r15", 0, 64)),
+        "r15d" => Some(("r15", 0, 32)),
+        "r15w" => Some(("r15", 0, 16)),
+        "r15b" => Some(("r15", 0, 8)),
+
+        _ => None,
+    }
+}
+
+#[derive(Clone)]
+struct SavedScope {
+    reg_state: HashMap<String, TermId>,
+    zero_flag: Option<TermId>,
+    carry_flag: Option<TermId>,
+    sign_flag: Option<TermId>,
+    overflow_flag: Option<TermId>,
+    stack: Vec<TermId>,
+}
+
 /// Symbolic lifter and path condition analyzer.
 pub struct Lifter {
     pub sorts: SortArena,
     pub terms: TermArena,
     reg_state: HashMap<String, TermId>,
     zero_flag: Option<TermId>,
-    scope_stack: Vec<(HashMap<String, TermId>, Option<TermId>)>,
+    carry_flag: Option<TermId>,
+    sign_flag: Option<TermId>,
+    overflow_flag: Option<TermId>,
+    stack: Vec<TermId>,
+    scope_stack: Vec<SavedScope>,
 }
 
 impl Default for Lifter {
@@ -241,46 +408,270 @@ impl Lifter {
             terms,
             reg_state: HashMap::new(),
             zero_flag: None,
+            carry_flag: None,
+            sign_flag: None,
+            overflow_flag: None,
+            stack: Vec::new(),
             scope_stack: Vec::new(),
         }
     }
 
-    /// Pushes current symbolic register state onto the scope stack (for incremental path exploration).
+    /// Pushes current symbolic register and flag states onto the scope stack.
     pub fn push(&mut self) {
-        self.scope_stack
-            .push((self.reg_state.clone(), self.zero_flag));
+        self.scope_stack.push(SavedScope {
+            reg_state: self.reg_state.clone(),
+            zero_flag: self.zero_flag,
+            carry_flag: self.carry_flag,
+            sign_flag: self.sign_flag,
+            overflow_flag: self.overflow_flag,
+            stack: self.stack.clone(),
+        });
     }
 
-    /// Pops previously saved symbolic register state from the scope stack.
+    /// Pops previously saved symbolic state from the scope stack.
     pub fn pop(&mut self) -> bool {
-        if let Some((saved_regs, saved_zf)) = self.scope_stack.pop() {
-            self.reg_state = saved_regs;
-            self.zero_flag = saved_zf;
+        if let Some(saved) = self.scope_stack.pop() {
+            self.reg_state = saved.reg_state;
+            self.zero_flag = saved.zero_flag;
+            self.carry_flag = saved.carry_flag;
+            self.sign_flag = saved.sign_flag;
+            self.overflow_flag = saved.overflow_flag;
+            self.stack = saved.stack;
             true
         } else {
             false
         }
     }
 
-    /// Initializes a symbolic register as an unconstrained free input variable.
+    /// Initializes a register as a free input variable.
     pub fn init_register(&mut self, name: &str, width: u32) -> TermId {
         let sort = self.sorts.bv(width);
         let var = self.terms.var(name, sort);
         self.reg_state.insert(name.to_string(), var);
+
+        if let Some((root, offset, w)) = canonical_reg_mapping(name) {
+            if w == 32 && offset == 0 {
+                let zero32 = self.terms.bv_const(0u32.into(), 32, &mut self.sorts);
+                if let Ok(val64) = self.terms.bv_concat(zero32, var, &mut self.sorts) {
+                    self.reg_state.insert(root.to_string(), val64);
+                }
+            } else if w == 64 {
+                if let Some(sub32) = subregister_32_name(root) {
+                    if let Ok(eax) = self.terms.bv_extract(31, 0, var, &mut self.sorts) {
+                        self.reg_state.insert(sub32.to_string(), eax);
+                    }
+                }
+            }
+        }
         var
+    }
+
+    /// Reads a register value, properly handling subregister extraction and canonical mapping.
+    pub fn read_reg(&mut self, name: &str, width: u32) -> TermId {
+        if let Some(&t) = self.reg_state.get(name) {
+            t
+        } else if let Some((root, offset, w)) = canonical_reg_mapping(name) {
+            if let Some(&root_val) = self.reg_state.get(root) {
+                if w == 64 {
+                    root_val
+                } else {
+                    let sub = self
+                        .terms
+                        .bv_extract(offset + w - 1, offset, root_val, &mut self.sorts)
+                        .expect("Valid subregister slice");
+                    self.reg_state.insert(name.to_string(), sub);
+                    sub
+                }
+            } else {
+                self.init_register(name, width)
+            }
+        } else {
+            self.init_register(name, width)
+        }
+    }
+
+    /// Writes a register value, implementing x86-64 implicit 32-bit zero-extension and partial aliasing.
+    pub fn write_reg(&mut self, name: &str, val: TermId, _width: u32) {
+        self.reg_state.insert(name.to_string(), val);
+
+        if let Some((root, offset, w)) = canonical_reg_mapping(name) {
+            if w == 32 {
+                // x86-64: writing to a 32-bit register zero-extends to 64 bits (upper 32 bits cleared)
+                let zero32 = self.terms.bv_const(0u32.into(), 32, &mut self.sorts);
+                let val64 = self
+                    .terms
+                    .bv_concat(zero32, val, &mut self.sorts)
+                    .expect("Valid 32-to-64 zero-extension");
+                self.reg_state.insert(root.to_string(), val64);
+            } else if w == 64 {
+                if let Some(sub32) = subregister_32_name(root) {
+                    if let Ok(eax) = self.terms.bv_extract(31, 0, val, &mut self.sorts) {
+                        self.reg_state.insert(sub32.to_string(), eax);
+                    }
+                }
+            } else if offset == 0 && w == 16 {
+                let root_val = self.read_reg(root, 64);
+                let high48 = self
+                    .terms
+                    .bv_extract(63, 16, root_val, &mut self.sorts)
+                    .expect("Extract high 48 bits");
+                let val64 = self
+                    .terms
+                    .bv_concat(high48, val, &mut self.sorts)
+                    .expect("Concat high 48 with 16");
+                self.reg_state.insert(root.to_string(), val64);
+                if let Some(sub32) = subregister_32_name(root) {
+                    if let Ok(eax) = self.terms.bv_extract(31, 0, val64, &mut self.sorts) {
+                        self.reg_state.insert(sub32.to_string(), eax);
+                    }
+                }
+            } else if offset == 0 && w == 8 {
+                let root_val = self.read_reg(root, 64);
+                let high56 = self
+                    .terms
+                    .bv_extract(63, 8, root_val, &mut self.sorts)
+                    .expect("Extract high 56 bits");
+                let val64 = self
+                    .terms
+                    .bv_concat(high56, val, &mut self.sorts)
+                    .expect("Concat high 56 with 8");
+                self.reg_state.insert(root.to_string(), val64);
+                if let Some(sub32) = subregister_32_name(root) {
+                    if let Ok(eax) = self.terms.bv_extract(31, 0, val64, &mut self.sorts) {
+                        self.reg_state.insert(sub32.to_string(), eax);
+                    }
+                }
+            } else if offset == 8 && w == 8 {
+                let root_val = self.read_reg(root, 64);
+                let high48 = self
+                    .terms
+                    .bv_extract(63, 16, root_val, &mut self.sorts)
+                    .expect("Extract high 48 bits");
+                let low8 = self
+                    .terms
+                    .bv_extract(7, 0, root_val, &mut self.sorts)
+                    .expect("Extract low 8 bits");
+                let mid16 = self
+                    .terms
+                    .bv_concat(val, low8, &mut self.sorts)
+                    .expect("Concat ah with low 8");
+                let val64 = self
+                    .terms
+                    .bv_concat(high48, mid16, &mut self.sorts)
+                    .expect("Concat high 48 with mid 16");
+                self.reg_state.insert(root.to_string(), val64);
+                if let Some(sub32) = subregister_32_name(root) {
+                    if let Ok(eax) = self.terms.bv_extract(31, 0, val64, &mut self.sorts) {
+                        self.reg_state.insert(sub32.to_string(), eax);
+                    }
+                }
+            } else {
+                self.reg_state.insert(root.to_string(), val);
+            }
+        }
     }
 
     /// Gets or creates the symbolic term for an operand.
     pub fn eval_operand(&mut self, op: &Operand) -> TermId {
         match op {
-            Operand::Reg(name, width) => {
-                if let Some(&term) = self.reg_state.get(name) {
-                    term
-                } else {
-                    self.init_register(name, *width)
-                }
-            }
+            Operand::Reg(name, width) => self.read_reg(name, *width),
             Operand::Imm(val, width) => self.terms.bv_const((*val).into(), *width, &mut self.sorts),
+        }
+    }
+
+    /// Updates subtraction / comparison ALU flags: ZF, CF, SF, OF.
+    fn update_sub_flags(&mut self, l: TermId, r: TermId) {
+        let bool_sort = self.sorts.bool_sort;
+        let sort = self.terms.sort_of(l);
+        let width = match self.sorts.get(sort) {
+            smt_core::sort::Sort::BitVec(w) => *w,
+            _ => 64,
+        };
+
+        // ZF: l == r
+        self.zero_flag = Some(self.terms.eq(l, r, &self.sorts));
+
+        // CF: unsigned borrow (l < r in unsigned)
+        self.carry_flag = Some(self.terms.intern(Op::BvUlt, vec![l, r], bool_sort));
+
+        // SF and OF derived from difference
+        if let Ok(diff) = self.terms.bv_binop(Op::BvSub, l, r) {
+            // SF: MSB of difference is 1
+            if let Ok(msb) = self
+                .terms
+                .bv_extract(width - 1, width - 1, diff, &mut self.sorts)
+            {
+                let one = self.terms.bv_const(1u32.into(), 1, &mut self.sorts);
+                self.sign_flag = Some(self.terms.eq(msb, one, &self.sorts));
+            }
+
+            // OF: signed overflow on subtraction: (sign(l) != sign(r)) && (sign(diff) != sign(l))
+            if let (Ok(sign_l), Ok(sign_r), Ok(sign_d)) = (
+                self.terms
+                    .bv_extract(width - 1, width - 1, l, &mut self.sorts),
+                self.terms
+                    .bv_extract(width - 1, width - 1, r, &mut self.sorts),
+                self.terms
+                    .bv_extract(width - 1, width - 1, diff, &mut self.sorts),
+            ) {
+                let diff_signs = {
+                    let eq = self.terms.eq(sign_l, sign_r, &self.sorts);
+                    self.terms.not(eq)
+                };
+                let wrong_res_sign = {
+                    let eq = self.terms.eq(sign_d, sign_l, &self.sorts);
+                    self.terms.not(eq)
+                };
+                let of = self
+                    .terms
+                    .and(vec![diff_signs, wrong_res_sign], &self.sorts);
+                self.overflow_flag = Some(of);
+            }
+        }
+    }
+
+    /// Updates addition ALU flags: ZF, CF, SF, OF.
+    fn update_add_flags(&mut self, l: TermId, r: TermId, sum: TermId) {
+        let bool_sort = self.sorts.bool_sort;
+        let sort = self.terms.sort_of(l);
+        let width = match self.sorts.get(sort) {
+            smt_core::sort::Sort::BitVec(w) => *w,
+            _ => 64,
+        };
+
+        let zero = self.terms.bv_const(0u32.into(), width, &mut self.sorts);
+        self.zero_flag = Some(self.terms.eq(sum, zero, &self.sorts));
+
+        // CF: unsigned overflow (sum < l)
+        self.carry_flag = Some(self.terms.intern(Op::BvUlt, vec![sum, l], bool_sort));
+
+        // SF: MSB of sum is 1
+        if let Ok(msb) = self
+            .terms
+            .bv_extract(width - 1, width - 1, sum, &mut self.sorts)
+        {
+            let one = self.terms.bv_const(1u32.into(), 1, &mut self.sorts);
+            self.sign_flag = Some(self.terms.eq(msb, one, &self.sorts));
+        }
+
+        // OF: signed overflow on addition: (sign(l) == sign(r)) && (sign(sum) != sign(l))
+        if let (Ok(sign_l), Ok(sign_r), Ok(sign_s)) = (
+            self.terms
+                .bv_extract(width - 1, width - 1, l, &mut self.sorts),
+            self.terms
+                .bv_extract(width - 1, width - 1, r, &mut self.sorts),
+            self.terms
+                .bv_extract(width - 1, width - 1, sum, &mut self.sorts),
+        ) {
+            let same_signs = self.terms.eq(sign_l, sign_r, &self.sorts);
+            let wrong_res_sign = {
+                let eq = self.terms.eq(sign_s, sign_l, &self.sorts);
+                self.terms.not(eq)
+            };
+            let of = self
+                .terms
+                .and(vec![same_signs, wrong_res_sign], &self.sorts);
+            self.overflow_flag = Some(of);
         }
     }
 
@@ -288,61 +679,86 @@ impl Lifter {
     pub fn step(&mut self, inst: &IrInstruction) {
         match inst {
             IrInstruction::Mov { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let src_term = self.eval_operand(src);
-                    self.reg_state.insert(name.clone(), src_term);
+                    self.write_reg(name, src_term, *width);
                 }
             }
             IrInstruction::Add { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let d = self.eval_operand(dst);
                     let s = self.eval_operand(src);
                     if let Ok(res) = self.terms.bv_binop(Op::BvAdd, d, s) {
-                        self.reg_state.insert(name.clone(), res);
+                        self.write_reg(name, res, *width);
+                        self.update_add_flags(d, s, res);
                     }
                 }
             }
             IrInstruction::Sub { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let d = self.eval_operand(dst);
                     let s = self.eval_operand(src);
                     if let Ok(res) = self.terms.bv_binop(Op::BvSub, d, s) {
-                        self.reg_state.insert(name.clone(), res);
+                        self.write_reg(name, res, *width);
+                        self.update_sub_flags(d, s);
                     }
                 }
             }
             IrInstruction::Xor { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let d = self.eval_operand(dst);
                     let s = self.eval_operand(src);
                     if let Ok(res) = self.terms.bv_binop(Op::BvXor, d, s) {
-                        self.reg_state.insert(name.clone(), res);
+                        self.write_reg(name, res, *width);
                     }
                 }
             }
             IrInstruction::And { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let d = self.eval_operand(dst);
                     let s = self.eval_operand(src);
                     if let Ok(res) = self.terms.bv_binop(Op::BvAnd, d, s) {
-                        self.reg_state.insert(name.clone(), res);
+                        self.write_reg(name, res, *width);
                     }
                 }
             }
             IrInstruction::Or { dst, src } => {
-                if let Operand::Reg(ref name, _) = dst {
+                if let Operand::Reg(ref name, width) = dst {
                     let d = self.eval_operand(dst);
                     let s = self.eval_operand(src);
                     if let Ok(res) = self.terms.bv_binop(Op::BvOr, d, s) {
-                        self.reg_state.insert(name.clone(), res);
+                        self.write_reg(name, res, *width);
                     }
                 }
             }
             IrInstruction::Cmp { left, right } => {
                 let l = self.eval_operand(left);
                 let r = self.eval_operand(right);
-                let zf = self.terms.eq(l, r, &self.sorts);
-                self.zero_flag = Some(zf);
+                self.update_sub_flags(l, r);
+            }
+            IrInstruction::Push { src } => {
+                let val = self.eval_operand(src);
+                self.stack.push(val);
+                let rsp_val = self.read_reg("rsp", 64);
+                let eight = self.terms.bv_const(8u32.into(), 64, &mut self.sorts);
+                if let Ok(new_rsp) = self.terms.bv_binop(Op::BvSub, rsp_val, eight) {
+                    self.write_reg("rsp", new_rsp, 64);
+                }
+            }
+            IrInstruction::Pop { dst } => {
+                let val = if let Some(v) = self.stack.pop() {
+                    v
+                } else {
+                    self.init_register("uninit_stack", 64)
+                };
+                if let Operand::Reg(ref name, width) = dst {
+                    self.write_reg(name, val, *width);
+                }
+                let rsp_val = self.read_reg("rsp", 64);
+                let eight = self.terms.bv_const(8u32.into(), 64, &mut self.sorts);
+                if let Ok(new_rsp) = self.terms.bv_binop(Op::BvAdd, rsp_val, eight) {
+                    self.write_reg("rsp", new_rsp, 64);
+                }
             }
             IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. } => {}
         }
@@ -355,6 +771,32 @@ impl Lifter {
         }
     }
 
+    /// Decodes and executes machine code bytes starting at the given instruction pointer.
+    pub fn decode_and_execute_bytes(
+        &mut self,
+        bytes: &[u8],
+        ip: u64,
+    ) -> Result<Vec<IrInstruction>, String> {
+        let mut current_ip = ip;
+        let mut offset = 0;
+        let mut instrs = Vec::new();
+        while offset < bytes.len() {
+            let decoded = crate::x86_decoder::X86Decoder::decode(&bytes[offset..], current_ip)?;
+            self.step(&decoded.instruction);
+            offset += decoded.length;
+            current_ip += decoded.length as u64;
+            let is_term = matches!(
+                decoded.instruction,
+                IrInstruction::Jcc { .. } | IrInstruction::Jmp { .. }
+            );
+            instrs.push(decoded.instruction);
+            if is_term {
+                break;
+            }
+        }
+        Ok(instrs)
+    }
+
     /// Simplifies all active register symbolic expressions using MBA and algebraic simplification.
     pub fn simplify_state(&mut self) {
         let mut mba = MbaSimplifier::new();
@@ -363,6 +805,101 @@ impl Lifter {
             if let Some(&tid) = self.reg_state.get(&k) {
                 let simplified = mba.simplify(tid, &mut self.terms, &mut self.sorts);
                 self.reg_state.insert(k, simplified);
+            }
+        }
+    }
+
+    /// Maps branch condition to SMT boolean term over tracked CPU status flags.
+    fn get_condition_term(&mut self, cond: BranchCondition) -> Result<TermId, String> {
+        match cond {
+            BranchCondition::Equal | BranchCondition::Zero => {
+                self.zero_flag.ok_or_else(|| "ZF required".to_string())
+            }
+            BranchCondition::NotEqual | BranchCondition::NotZero => {
+                let zf = self.zero_flag.ok_or_else(|| "ZF required".to_string())?;
+                Ok(self.terms.not(zf))
+            }
+            BranchCondition::BelowUnsigned => {
+                self.carry_flag.ok_or_else(|| "CF required".to_string())
+            }
+            BranchCondition::AboveOrEqualUnsigned => {
+                let cf = self.carry_flag.ok_or_else(|| "CF required".to_string())?;
+                Ok(self.terms.not(cf))
+            }
+            BranchCondition::BelowOrEqualUnsigned => {
+                let cf = self.carry_flag.ok_or_else(|| "CF required".to_string())?;
+                let zf = self.zero_flag.ok_or_else(|| "ZF required".to_string())?;
+                Ok(self.terms.or(vec![cf, zf], &self.sorts))
+            }
+            BranchCondition::AboveUnsigned => {
+                let cf = self.carry_flag.ok_or_else(|| "CF required".to_string())?;
+                let zf = self.zero_flag.ok_or_else(|| "ZF required".to_string())?;
+                let not_cf = self.terms.not(cf);
+                let not_zf = self.terms.not(zf);
+                Ok(self.terms.and(vec![not_cf, not_zf], &self.sorts))
+            }
+            BranchCondition::Sign => self.sign_flag.ok_or_else(|| "SF required".to_string()),
+            BranchCondition::NotSign => {
+                let sf = self.sign_flag.ok_or_else(|| "SF required".to_string())?;
+                Ok(self.terms.not(sf))
+            }
+            BranchCondition::Overflow => {
+                self.overflow_flag.ok_or_else(|| "OF required".to_string())
+            }
+            BranchCondition::NotOverflow => {
+                let of = self
+                    .overflow_flag
+                    .ok_or_else(|| "OF required".to_string())?;
+                Ok(self.terms.not(of))
+            }
+            BranchCondition::LessThanSigned => {
+                let sf = self.sign_flag.ok_or_else(|| "SF required".to_string())?;
+                let of = self
+                    .overflow_flag
+                    .ok_or_else(|| "OF required".to_string())?;
+                let not_of = self.terms.not(of);
+                let p1 = self.terms.and(vec![sf, not_of], &self.sorts);
+                let not_sf = self.terms.not(sf);
+                let p2 = self.terms.and(vec![not_sf, of], &self.sorts);
+                Ok(self.terms.or(vec![p1, p2], &self.sorts))
+            }
+            BranchCondition::GreaterOrEqualSigned => {
+                let sf = self.sign_flag.ok_or_else(|| "SF required".to_string())?;
+                let of = self
+                    .overflow_flag
+                    .ok_or_else(|| "OF required".to_string())?;
+                let both_t = self.terms.and(vec![sf, of], &self.sorts);
+                let not_sf = self.terms.not(sf);
+                let not_of = self.terms.not(of);
+                let both_f = self.terms.and(vec![not_sf, not_of], &self.sorts);
+                Ok(self.terms.or(vec![both_t, both_f], &self.sorts))
+            }
+            BranchCondition::LessOrEqualSigned => {
+                let zf = self.zero_flag.ok_or_else(|| "ZF required".to_string())?;
+                let sf = self.sign_flag.ok_or_else(|| "SF required".to_string())?;
+                let of = self
+                    .overflow_flag
+                    .ok_or_else(|| "OF required".to_string())?;
+                let not_of = self.terms.not(of);
+                let p1 = self.terms.and(vec![sf, not_of], &self.sorts);
+                let not_sf = self.terms.not(sf);
+                let p2 = self.terms.and(vec![not_sf, of], &self.sorts);
+                let xor_term = self.terms.or(vec![p1, p2], &self.sorts);
+                Ok(self.terms.or(vec![zf, xor_term], &self.sorts))
+            }
+            BranchCondition::GreaterThanSigned => {
+                let zf = self.zero_flag.ok_or_else(|| "ZF required".to_string())?;
+                let sf = self.sign_flag.ok_or_else(|| "SF required".to_string())?;
+                let of = self
+                    .overflow_flag
+                    .ok_or_else(|| "OF required".to_string())?;
+                let not_zf = self.terms.not(zf);
+                let both_t = self.terms.and(vec![sf, of], &self.sorts);
+                let not_sf = self.terms.not(sf);
+                let not_of = self.terms.not(of);
+                let both_f = self.terms.and(vec![not_sf, not_of], &self.sorts);
+                let eq_term = self.terms.or(vec![both_t, both_f], &self.sorts);
+                Ok(self.terms.and(vec![not_zf, eq_term], &self.sorts))
             }
         }
     }
@@ -381,21 +918,13 @@ impl Lifter {
                 target_true,
                 target_false,
             } => {
-                let cond_term = match cond {
-                    BranchCondition::Equal | BranchCondition::Zero => {
-                        self.zero_flag.expect("ZF flag required for Jcc Equal/Zero")
-                    }
-                    BranchCondition::NotEqual | BranchCondition::NotZero => {
-                        let zf = self
-                            .zero_flag
-                            .expect("ZF flag required for Jcc NotEqual/NotZero");
-                        self.terms.not(zf)
-                    }
-                    _ => {
+                let cond_term = match self.get_condition_term(*cond) {
+                    Ok(term) => term,
+                    Err(_) => {
                         return BranchResolution::Conditional {
                             true_target: *target_true,
                             false_target: *target_false,
-                        }
+                        };
                     }
                 };
 
@@ -470,17 +999,9 @@ impl Lifter {
                 target_true,
                 target_false,
             } => {
-                let cond_term = match cond {
-                    BranchCondition::Equal | BranchCondition::Zero => {
-                        self.zero_flag.expect("ZF flag required for Jcc Equal/Zero")
-                    }
-                    BranchCondition::NotEqual | BranchCondition::NotZero => {
-                        let zf = self
-                            .zero_flag
-                            .expect("ZF flag required for Jcc NotEqual/NotZero");
-                        self.terms.not(zf)
-                    }
-                    _ => {
+                let cond_term = match self.get_condition_term(*cond) {
+                    Ok(term) => term,
+                    Err(err) => {
                         return ProofCarryingResolution {
                             status: DeobfuscationStatus::ProvenDynamic {
                                 true_target: *target_true,
@@ -490,7 +1011,7 @@ impl Lifter {
                                 true_target: *target_true,
                                 false_target: *target_false,
                             },
-                            certificate: "Complex condition assumed dynamic".to_string(),
+                            certificate: format!("Condition cannot be evaluated: {}", err),
                             true_branch_model: None,
                             false_branch_model: None,
                         };

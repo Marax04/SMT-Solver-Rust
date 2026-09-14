@@ -9,6 +9,7 @@ pub mod opaque;
 pub mod stats;
 pub mod synthesis;
 pub mod validator;
+pub mod x86_decoder;
 
 pub use crypto::{CryptoAlgorithm, CryptoMatch, CryptoScanner};
 pub use engine::{CheckSatResult, ScoreHeuristic, Solver};
@@ -24,3 +25,4 @@ pub use opaque::{
 pub use stats::SolverMetrics;
 pub use synthesis::{Gf2LinearMbaSimplifier, IoProgramSynthesizer};
 pub use validator::ModelValidator;
+pub use x86_decoder::{DecodedInstruction, X86Decoder};

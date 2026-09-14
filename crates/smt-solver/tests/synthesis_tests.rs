@@ -100,3 +100,98 @@ fn test_gf2_linear_mba_simplifier_oracle_pipeline() {
     let term = terms.get(res);
     assert_eq!(term.op, Op::BvXor);
 }
+
+#[test]
+fn test_equivalence_counterexample_model_extraction() {
+    let mut sorts = SortArena::new();
+    let mut terms = TermArena::new(&mut sorts);
+    let bv32 = sorts.bv(32);
+    let x = terms.var("x", bv32);
+    let y = terms.var("y", bv32);
+
+    // a = x + y
+    let a = terms.bv_binop(Op::BvAdd, x, y).unwrap();
+    // b = x - y (not equivalent)
+    let b = terms.bv_binop(Op::BvSub, x, y).unwrap();
+
+    let res =
+        IoProgramSynthesizer::verify_equivalence_with_counterexample(a, b, &mut terms, &mut sorts);
+    assert!(
+        res.is_err(),
+        "Non-equivalent expressions must return Err(model)"
+    );
+
+    let counterexample = res.unwrap_err();
+    // Counterexample model must contain assignments for x and y
+    assert!(
+        counterexample.get("y").is_some(),
+        "Counterexample must assign variable y to prove discrepancy"
+    );
+
+    // Verify counterexample witness: evaluating a and b on model yields distinct results
+    let mut validator = smt_solver::validator::ModelValidator::new();
+    let val_a = validator
+        .evaluate(a, &counterexample, &terms, &sorts)
+        .unwrap();
+    let val_b = validator
+        .evaluate(b, &counterexample, &terms, &sorts)
+        .unwrap();
+    assert_ne!(
+        val_a, val_b,
+        "Counterexample model must produce different concrete values: {:?} != {:?}",
+        val_a, val_b
+    );
+}
+
+#[test]
+fn test_smtlib_qf_bv_edge_cases_semantics() {
+    use smt_solver::engine::Solver;
+
+    let mut solver = Solver::new();
+    solver.set_logic("QF_BV");
+
+    // SMT-LIB standard edge cases:
+    // 1. (bvudiv x (_ bv0 32)) == #xffffffff
+    // 2. (bvurem x (_ bv0 32)) == x
+    // 3. (bvlshr x (_ bv32 32)) == #x00000000
+    let script = r#"
+(set-logic QF_BV)
+(declare-const x (_ BitVec 32))
+(assert (distinct (bvudiv x (_ bv0 32)) (_ bv4294967295 32)))
+(check-sat)
+"#;
+    let res = solver.execute_script(script).unwrap();
+    assert_eq!(
+        res.join(" ").trim(),
+        "unsat",
+        "SMT-LIB division by zero must equal all 1s (4294967295) for all x"
+    );
+
+    let script2 = r#"
+(set-logic QF_BV)
+(declare-const x (_ BitVec 32))
+(assert (distinct (bvurem x (_ bv0 32)) x))
+(check-sat)
+"#;
+    let mut solver2 = Solver::new();
+    let res2 = solver2.execute_script(script2).unwrap();
+    assert_eq!(
+        res2.join(" ").trim(),
+        "unsat",
+        "SMT-LIB remainder by zero must equal the dividend x for all x"
+    );
+
+    let script3 = r#"
+(set-logic QF_BV)
+(declare-const x (_ BitVec 32))
+(assert (distinct (bvlshr x (_ bv32 32)) (_ bv0 32)))
+(check-sat)
+"#;
+    let mut solver3 = Solver::new();
+    let res3 = solver3.execute_script(script3).unwrap();
+    assert_eq!(
+        res3.join(" ").trim(),
+        "unsat",
+        "SMT-LIB shift right by >= bitwidth must equal zero for all x"
+    );
+}

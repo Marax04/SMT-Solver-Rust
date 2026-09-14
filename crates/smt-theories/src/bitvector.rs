@@ -589,6 +589,17 @@ impl<'a> BitBlaster<'a> {
             curr = next;
         }
 
+        let mut overflow = false_l;
+        for (stage, &b_bit) in b.iter().enumerate() {
+            let shift = 1 << stage;
+            if shift >= len {
+                overflow = self.gate_or(overflow, b_bit, solver);
+            }
+        }
+        for item in curr.iter_mut().take(len) {
+            *item = self.gate_ite(overflow, false_l, *item, solver);
+        }
+
         curr
     }
 
@@ -615,6 +626,17 @@ impl<'a> BitBlaster<'a> {
             curr = next;
         }
 
+        let mut overflow = false_l;
+        for (stage, &b_bit) in b.iter().enumerate() {
+            let shift = 1 << stage;
+            if shift >= len {
+                overflow = self.gate_or(overflow, b_bit, solver);
+            }
+        }
+        for item in curr.iter_mut().take(len) {
+            *item = self.gate_ite(overflow, false_l, *item, solver);
+        }
+
         curr
     }
 
@@ -639,6 +661,18 @@ impl<'a> BitBlaster<'a> {
                 next[i] = self.gate_ite(b_bit, shifted_in, curr[i], solver);
             }
             curr = next;
+        }
+
+        let false_l = !self.get_true_lit(solver);
+        let mut overflow = false_l;
+        for (stage, &b_bit) in b.iter().enumerate() {
+            let shift = 1 << stage;
+            if shift >= len {
+                overflow = self.gate_or(overflow, b_bit, solver);
+            }
+        }
+        for item in curr.iter_mut().take(len) {
+            *item = self.gate_ite(overflow, sign_bit, *item, solver);
         }
 
         curr

@@ -115,14 +115,47 @@ impl IoProgramSynthesizer {
         terms: &mut TermArena,
         sorts: &mut SortArena,
     ) -> bool {
+        Self::verify_equivalence_with_counterexample(a, b, terms, sorts).is_ok()
+    }
+
+    /// Formally checks equivalence `a <=> b`.
+    /// - If equivalent, returns `Ok(())` (certified UNSAT for distinct(a, b)).
+    /// - If non-equivalent, returns `Err(counterexample)` with concrete variable assignments disproving equivalence.
+    pub fn verify_equivalence_with_counterexample(
+        a: TermId,
+        b: TermId,
+        terms: &mut TermArena,
+        sorts: &mut SortArena,
+    ) -> Result<(), Model> {
         let mut solver = Solver::new();
         solver.sorts = sorts.clone();
         solver.terms = terms.clone();
         solver.set_logic("QF_BV");
 
+        let mut vars = Vec::new();
+        Self::collect_vars(a, &solver.terms, &mut vars);
+        Self::collect_vars(b, &solver.terms, &mut vars);
+        let mut decls = Vec::new();
+        for &v in &vars {
+            if let Op::Var(ref name) = solver.terms.get(v).op {
+                let sort = solver.terms.sort_of(v);
+                decls.push((name.clone(), sort));
+            }
+        }
+        for (name, sort) in decls {
+            solver.declare_const(&name, sort);
+        }
+
         let neq = solver.terms.distinct(vec![a, b], &solver.sorts);
         solver.assert_formula(neq);
-        solver.check_sat() == CheckSatResult::Unsat
+        match solver.check_sat() {
+            CheckSatResult::Unsat => Ok(()),
+            CheckSatResult::Sat => {
+                let model = solver.get_model().cloned().unwrap_or_default();
+                Err(model)
+            }
+            CheckSatResult::Unknown => Err(solver.get_model().cloned().unwrap_or_default()),
+        }
     }
 
     fn collect_vars(term_id: TermId, terms: &TermArena, vars: &mut Vec<TermId>) {

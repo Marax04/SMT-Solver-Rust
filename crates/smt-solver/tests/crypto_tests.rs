@@ -228,3 +228,56 @@ fn test_crypto_pipeline_normalize_then_scan_mba_hidden_constants() {
         "Matched AES S-Box detection must have positive confidence score"
     );
 }
+
+#[test]
+fn test_crypto_pipeline_symbolic_runtime_variable_mba_simplification() {
+    // Demonstrates closure of L5b:
+    // When cryptographic constants are entangled with FREE RUNTIME SYMBOLIC VARIABLES
+    // (e.g. input key or round state 'x' which is NOT a constant),
+    // ConstantFolder alone is helpless. Only MbaSimplifier (symbolic algebraic reduction)
+    // can reduce: ((x ^ c) + 2*(x & c)) - x => c
+    use smt_solver::crypto::CryptoAlgorithm;
+    let mut solver = Solver::new();
+    let bv8 = solver.sorts.bv(8);
+    solver.set_logic("QF_BV");
+
+    let two8 = solver.terms.bv_const(2u32.into(), 8, &mut solver.sorts);
+    let runtime_sym_var = solver.declare_const("runtime_key_x", bv8);
+
+    for (i, &b) in AES_SBOX.iter().take(10).enumerate() {
+        let sbox_const = solver
+            .terms
+            .bv_const((b as u32).into(), 8, &mut solver.sorts);
+
+        // Disguise S-box byte 'b' with free symbolic runtime variable 'runtime_key_x':
+        // t = ((runtime_key_x ^ b) + 2*(runtime_key_x & b)) - runtime_key_x
+        let xor_part = solver
+            .terms
+            .bv_binop(Op::BvXor, runtime_sym_var, sbox_const)
+            .unwrap();
+        let and_part = solver
+            .terms
+            .bv_binop(Op::BvAnd, runtime_sym_var, sbox_const)
+            .unwrap();
+        let two_and = solver.terms.bv_binop(Op::BvMul, and_part, two8).unwrap();
+        let sum_part = solver.terms.bv_binop(Op::BvAdd, xor_part, two_and).unwrap();
+        let disguised = solver
+            .terms
+            .bv_binop(Op::BvSub, sum_part, runtime_sym_var)
+            .unwrap();
+
+        let out_var = solver.declare_const(&format!("state_out_{:02x}_{}", b, i), bv8);
+        let eq = solver.terms.eq(out_var, disguised, &solver.sorts);
+        solver.assert_formula(eq);
+    }
+
+    // scan_crypto runs: MbaSimplifier -> Rewriter -> ConstantFolder
+    let matches = solver.scan_crypto();
+    let aes_match = matches
+        .iter()
+        .find(|m| m.algorithm == CryptoAlgorithm::AesForwardSbox);
+    assert!(
+        aes_match.is_some(),
+        "L5b verified: symbolic runtime variables must be deobfuscated to uncover AES S-Box constants"
+    );
+}
