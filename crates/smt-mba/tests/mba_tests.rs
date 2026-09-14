@@ -1,7 +1,7 @@
 use smt_core::sort::SortArena;
 use smt_core::term::{Op, TermArena};
-use smt_mba::synthesis::IoProgramSynthesizer;
 use smt_mba::MbaSimplifier;
+use smt_solver::synthesis::IoProgramSynthesizer;
 
 #[test]
 fn test_linear_mba_xor_and() {
@@ -141,7 +141,7 @@ fn test_gf2_matrix_rref() {
 
 #[test]
 fn test_gf2_mba_5_variables() {
-    use smt_mba::Gf2LinearMbaSimplifier;
+    use smt_solver::synthesis::Gf2LinearMbaSimplifier;
 
     let mut sorts = SortArena::new();
     let mut terms = TermArena::new(&mut sorts);

@@ -560,10 +560,16 @@ impl Solver {
     /// resolve to their underlying constants before pattern matching. The folded terms are
     /// interned into the arena and therefore visible to `CryptoScanner::scan`.
     pub fn scan_crypto(&mut self) -> Vec<crate::crypto::CryptoMatch> {
-        // 1. Normalize every assertion: algebraic rewrite followed by constant folding.
+        // 1. Normalize every assertion: MBA simplification, algebraic rewrite, followed by constant folding.
         // This resolves MBA-obfuscated expressions (e.g. (x ^ x) + c, (c ^ k) + 2*(c & k) - k)
         // to their underlying values before pattern matching.
         let assertion_ids: Vec<TermId> = self.assertions.clone();
+        {
+            let mut mba = smt_mba::MbaSimplifier::new();
+            for id in &assertion_ids {
+                mba.simplify(*id, &mut self.terms, &mut self.sorts);
+            }
+        }
         {
             let mut rewriter = Rewriter::new(&mut self.terms, &mut self.sorts);
             for id in &assertion_ids {

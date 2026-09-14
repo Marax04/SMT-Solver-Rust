@@ -7,9 +7,14 @@ license.workspace = true
 
 [dependencies]
 smt-core = { path = "../smt-core" }
-smt-solver = { path = "../smt-solver" }
 num-bigint = { version = "0.4", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 smt-parser = { path = "../smt-parser" }
+smt-solver = { path = "../smt-solver" }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "gf2_bench"
+harness = false
