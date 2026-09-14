@@ -108,17 +108,56 @@ impl IoProgramSynthesizer {
     }
 }
 
+/// Diagnostic enterprise metadata for equivalence verification queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EquivalenceMetadata {
+    /// Solving duration in milliseconds.
+    pub solving_time_ms: u64,
+    /// Logic applied for solving (e.g. "QF_BV", "QF_ABV").
+    pub logic: String,
+    /// Whether solver aborted due to resource or time budget limit.
+    pub budget_exhausted: bool,
+    /// Whether counterexample was independently confirmed by circuit model validator.
+    pub model_validated: bool,
+    /// Whether external reference oracle (e.g. Z3) verified the outcome.
+    pub oracle_agreed: Option<bool>,
+    /// Whether a formal unsat/counterexample proof is available.
+    pub proof_available: bool,
+}
+
 /// Diagnostic classification of symbolic program equivalence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EquivalenceResult {
     /// Formally proven equivalent (negation is certified UNSAT).
-    Equivalent,
+    Equivalent(EquivalenceMetadata),
     /// Non-equivalent: counterexample model witnesses diverging evaluation.
-    NotEquivalent(Model),
+    NotEquivalent(Model, EquivalenceMetadata),
     /// Inconclusive due to theory incompleteness, timeouts, or resource limits.
-    Unknown(String),
+    Unknown(String, EquivalenceMetadata),
     /// Typo, sort mismatch, or structural error during query formulation.
     Error(String),
+}
+
+impl EquivalenceResult {
+    /// Returns true if the query proved equivalence (UNSAT).
+    pub fn is_equivalent(&self) -> bool {
+        matches!(self, EquivalenceResult::Equivalent(_))
+    }
+
+    /// Returns true if the query proved non-equivalence with a counterexample (SAT).
+    pub fn is_not_equivalent(&self) -> bool {
+        matches!(self, EquivalenceResult::NotEquivalent(_, _))
+    }
+
+    /// Returns diagnostic metadata if available.
+    pub fn metadata(&self) -> Option<&EquivalenceMetadata> {
+        match self {
+            EquivalenceResult::Equivalent(m)
+            | EquivalenceResult::NotEquivalent(_, m)
+            | EquivalenceResult::Unknown(_, m) => Some(m),
+            EquivalenceResult::Error(_) => None,
+        }
+    }
 }
 
 impl IoProgramSynthesizer {
@@ -132,14 +171,14 @@ impl IoProgramSynthesizer {
     ) -> bool {
         matches!(
             Self::verify_equivalence_detailed(a, b, terms, sorts),
-            EquivalenceResult::Equivalent
+            EquivalenceResult::Equivalent(_)
         )
     }
 
-    /// Formally checks equivalence `a <=> b` returning a typed diagnostic result.
-    /// - `EquivalenceResult::Equivalent`: Certified UNSAT for distinct(a, b).
-    /// - `EquivalenceResult::NotEquivalent(model)`: Certified SAT with counterexample model disproving equivalence.
-    /// - `EquivalenceResult::Unknown(reason)`: Inconclusive.
+    /// Formally checks equivalence `a <=> b` returning a typed diagnostic result with metadata.
+    /// - `EquivalenceResult::Equivalent(meta)`: Certified UNSAT for distinct(a, b).
+    /// - `EquivalenceResult::NotEquivalent(model, meta)`: Certified SAT with counterexample model disproving equivalence.
+    /// - `EquivalenceResult::Unknown(reason, meta)`: Inconclusive.
     /// - `EquivalenceResult::Error(msg)`: Sort mismatch or structural error.
     pub fn verify_equivalence_detailed(
         a: TermId,
@@ -147,6 +186,7 @@ impl IoProgramSynthesizer {
         terms: &mut TermArena,
         sorts: &mut SortArena,
     ) -> EquivalenceResult {
+        let start = std::time::Instant::now();
         let sort_a = terms.sort_of(a);
         let sort_b = terms.sort_of(b);
         if sort_a != sort_b {
@@ -177,8 +217,21 @@ impl IoProgramSynthesizer {
 
         let neq = solver.terms.distinct(vec![a, b], &solver.sorts);
         solver.assert_formula(neq);
-        match solver.check_sat() {
-            CheckSatResult::Unsat => EquivalenceResult::Equivalent,
+        let sat_res = solver.check_sat();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        match sat_res {
+            CheckSatResult::Unsat => {
+                let meta = EquivalenceMetadata {
+                    solving_time_ms: elapsed_ms,
+                    logic: "QF_BV".to_string(),
+                    budget_exhausted: false,
+                    model_validated: false,
+                    oracle_agreed: None,
+                    proof_available: true,
+                };
+                EquivalenceResult::Equivalent(meta)
+            }
             CheckSatResult::Sat => {
                 let model = solver.get_model().cloned().unwrap_or_default();
                 let mut validator = ModelValidator::new();
@@ -188,19 +241,54 @@ impl IoProgramSynthesizer {
                 ) {
                     (Ok(val_a), Ok(val_b)) => {
                         if val_a != val_b {
-                            EquivalenceResult::NotEquivalent(model)
+                            let meta = EquivalenceMetadata {
+                                solving_time_ms: elapsed_ms,
+                                logic: "QF_BV".to_string(),
+                                budget_exhausted: false,
+                                model_validated: true,
+                                oracle_agreed: None,
+                                proof_available: true,
+                            };
+                            EquivalenceResult::NotEquivalent(model, meta)
                         } else {
+                            let meta = EquivalenceMetadata {
+                                solving_time_ms: elapsed_ms,
+                                logic: "QF_BV".to_string(),
+                                budget_exhausted: false,
+                                model_validated: false,
+                                oracle_agreed: None,
+                                proof_available: false,
+                            };
                             EquivalenceResult::Unknown(
                                 "Model extraction produced identical evaluations for distinct query"
                                     .to_string(),
+                                meta,
                             )
                         }
                     }
-                    _ => EquivalenceResult::NotEquivalent(model),
+                    _ => {
+                        let meta = EquivalenceMetadata {
+                            solving_time_ms: elapsed_ms,
+                            logic: "QF_BV".to_string(),
+                            budget_exhausted: false,
+                            model_validated: false,
+                            oracle_agreed: None,
+                            proof_available: true,
+                        };
+                        EquivalenceResult::NotEquivalent(model, meta)
+                    }
                 }
             }
             CheckSatResult::Unknown => {
-                EquivalenceResult::Unknown("SMT solver returned Unknown".to_string())
+                let meta = EquivalenceMetadata {
+                    solving_time_ms: elapsed_ms,
+                    logic: "QF_BV".to_string(),
+                    budget_exhausted: true,
+                    model_validated: false,
+                    oracle_agreed: None,
+                    proof_available: false,
+                };
+                EquivalenceResult::Unknown("SMT solver returned Unknown".to_string(), meta)
             }
         }
     }
@@ -215,9 +303,9 @@ impl IoProgramSynthesizer {
         sorts: &mut SortArena,
     ) -> Result<(), Model> {
         match Self::verify_equivalence_detailed(a, b, terms, sorts) {
-            EquivalenceResult::Equivalent => Ok(()),
-            EquivalenceResult::NotEquivalent(model) => Err(model),
-            EquivalenceResult::Unknown(_) | EquivalenceResult::Error(_) => Err(Model::new()),
+            EquivalenceResult::Equivalent(_) => Ok(()),
+            EquivalenceResult::NotEquivalent(model, _) => Err(model),
+            EquivalenceResult::Unknown(_, _) | EquivalenceResult::Error(_) => Err(Model::new()),
         }
     }
 

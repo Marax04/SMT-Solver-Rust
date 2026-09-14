@@ -165,18 +165,26 @@ fn test_equivalence_detailed_api_classification() {
 
     let eq_res =
         IoProgramSynthesizer::verify_equivalence_detailed(lhs, rhs, &mut terms, &mut sorts);
-    assert_eq!(eq_res, EquivalenceResult::Equivalent);
+    assert!(eq_res.is_equivalent());
+    let meta = eq_res.metadata().expect("Metadata present");
+    assert_eq!(meta.logic, "QF_BV");
+    assert!(meta.proof_available);
+    assert!(!meta.budget_exhausted);
 
     // 2. NotEquivalent case: x + y <!=> x - y
     let non_eq_rhs = terms.bv_binop(Op::BvSub, x, y).unwrap();
     let non_eq_res =
         IoProgramSynthesizer::verify_equivalence_detailed(lhs, non_eq_rhs, &mut terms, &mut sorts);
-    assert!(matches!(non_eq_res, EquivalenceResult::NotEquivalent(_)));
+    assert!(non_eq_res.is_not_equivalent());
+    let non_eq_meta = non_eq_res.metadata().expect("Metadata present");
+    assert!(non_eq_meta.model_validated);
+    assert!(!non_eq_meta.budget_exhausted);
 
     // 3. Error case: sort mismatch (bv32 vs bv64)
     let err_res =
         IoProgramSynthesizer::verify_equivalence_detailed(lhs, z64, &mut terms, &mut sorts);
     assert!(matches!(err_res, EquivalenceResult::Error(_)));
+    assert!(err_res.metadata().is_none());
 }
 
 #[test]

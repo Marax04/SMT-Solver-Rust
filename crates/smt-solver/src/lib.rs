@@ -1,6 +1,7 @@
 //! High-level SMT Solver engine coordinating CDCL(T), theory solvers,
 //! model generation, unsat core computation, and script execution.
 
+pub mod binary_loader;
 pub mod crypto;
 pub mod engine;
 pub mod lifter;
@@ -11,6 +12,7 @@ pub mod synthesis;
 pub mod validator;
 pub mod x86_decoder;
 
+pub use binary_loader::{BinaryFormat, BinaryLoader, Elf64File, Elf64Section, Pe64File, PeSection};
 pub use crypto::{CryptoAlgorithm, CryptoMatch, CryptoScanner};
 pub use engine::{CheckSatResult, ScoreHeuristic, Solver};
 pub use lifter::{
@@ -23,6 +25,8 @@ pub use opaque::{
     TraceBranch,
 };
 pub use stats::SolverMetrics;
-pub use synthesis::{EquivalenceResult, Gf2LinearMbaSimplifier, IoProgramSynthesizer};
+pub use synthesis::{
+    EquivalenceMetadata, EquivalenceResult, Gf2LinearMbaSimplifier, IoProgramSynthesizer,
+};
 pub use validator::ModelValidator;
 pub use x86_decoder::{DecodedInstruction, X86Decoder};

@@ -376,10 +376,10 @@ impl X86Decoder {
                         left: r_reg,
                         right: rm_op,
                     },
-                    0x85 => IrInstruction::Cmp {
+                    0x85 => IrInstruction::Test {
                         left: rm_op,
                         right: r_reg,
-                    }, // TEST
+                    },
                     0x89 => IrInstruction::Mov {
                         dst: rm_op,
                         src: r_reg,
@@ -590,6 +590,172 @@ impl X86Decoder {
                     instruction: IrInstruction::Mov {
                         dst: target,
                         src: Operand::Imm(imm32, width),
+                    },
+                    length: offset,
+                })
+            }
+
+            // TEST r/m8, reg8 (0x84)
+            0x84 => {
+                if offset >= bytes.len() {
+                    return Err("Missing ModR/M byte for 0x84".to_string());
+                }
+                let modrm = bytes[offset];
+                offset += 1;
+                let mode = (modrm >> 6) & 3;
+                let reg_field = ((modrm >> 3) & 7) as usize + rex_r;
+                let rm_raw = modrm & 7;
+                let r_reg = get_reg(reg_field, 8);
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width: 8,
+                    has_rex,
+                    imm_len: 0,
+                    inst_start_ip: ip,
+                };
+                let rm_op = Self::decode_rm(&ctx, &mut offset)?;
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Test {
+                        left: rm_op,
+                        right: r_reg,
+                    },
+                    length: offset,
+                })
+            }
+
+            // TEST AL, imm8 (0xA8)
+            0xa8 => {
+                if offset >= bytes.len() {
+                    return Err("Missing imm8 for 0xA8".to_string());
+                }
+                let imm8 = bytes[offset] as u64;
+                offset += 1;
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Test {
+                        left: Operand::Reg("al".to_string(), 8),
+                        right: Operand::Imm(imm8, 8),
+                    },
+                    length: offset,
+                })
+            }
+
+            // TEST AX/EAX/RAX, imm16/32 (0xA9)
+            0xa9 => {
+                let imm_len = if width == 16 { 2 } else { 4 };
+                if offset + imm_len > bytes.len() {
+                    return Err("Missing imm for 0xA9".to_string());
+                }
+                let imm = if imm_len == 2 {
+                    u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as u64
+                } else {
+                    u32::from_le_bytes([
+                        bytes[offset],
+                        bytes[offset + 1],
+                        bytes[offset + 2],
+                        bytes[offset + 3],
+                    ]) as u64
+                };
+                offset += imm_len;
+                let reg = get_reg(0, width);
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Test {
+                        left: reg,
+                        right: Operand::Imm(imm, width),
+                    },
+                    length: offset,
+                })
+            }
+
+            // Group 3 TEST r/m8, imm8 (0xF6 /0)
+            0xf6 => {
+                if offset >= bytes.len() {
+                    return Err("Missing ModR/M byte for 0xF6".to_string());
+                }
+                let modrm = bytes[offset];
+                offset += 1;
+                let mode = (modrm >> 6) & 3;
+                let op_reg = (modrm >> 3) & 7;
+                let rm_raw = modrm & 7;
+
+                if op_reg != 0 {
+                    return Err(format!("Unsupported 0xF6 /{} op", op_reg));
+                }
+
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width: 8,
+                    has_rex,
+                    imm_len: 1,
+                    inst_start_ip: ip,
+                };
+                let rm_op = Self::decode_rm(&ctx, &mut offset)?;
+
+                if offset >= bytes.len() {
+                    return Err("Missing imm8 for 0xF6 /0".to_string());
+                }
+                let imm8 = bytes[offset] as u64;
+                offset += 1;
+
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Test {
+                        left: rm_op,
+                        right: Operand::Imm(imm8, 8),
+                    },
+                    length: offset,
+                })
+            }
+
+            // Group 3 TEST r/m, imm32 (0xF7 /0)
+            0xf7 => {
+                if offset >= bytes.len() {
+                    return Err("Missing ModR/M byte for 0xF7".to_string());
+                }
+                let modrm = bytes[offset];
+                offset += 1;
+                let mode = (modrm >> 6) & 3;
+                let op_reg = (modrm >> 3) & 7;
+                let rm_raw = modrm & 7;
+
+                if op_reg != 0 {
+                    return Err(format!("Unsupported 0xF7 /{} op", op_reg));
+                }
+
+                let ctx = ModRmContext {
+                    bytes,
+                    mode,
+                    rm_raw,
+                    rex_x,
+                    rex_b,
+                    width,
+                    has_rex,
+                    imm_len: 4,
+                    inst_start_ip: ip,
+                };
+                let rm_op = Self::decode_rm(&ctx, &mut offset)?;
+
+                if offset + 4 > bytes.len() {
+                    return Err("Missing imm32 for 0xF7 /0".to_string());
+                }
+                let imm32 = u32::from_le_bytes([
+                    bytes[offset],
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ]) as u64;
+                offset += 4;
+
+                Ok(DecodedInstruction {
+                    instruction: IrInstruction::Test {
+                        left: rm_op,
+                        right: Operand::Imm(imm32, width),
                     },
                     length: offset,
                 })

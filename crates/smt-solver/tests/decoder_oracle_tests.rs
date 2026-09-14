@@ -152,7 +152,27 @@ fn test_oracle_alu_reg_reg() {
     });
     // test edx, ecx (85 ca)
     check_instruction(&[0x85, 0xca], 0x1000, |i| {
-        matches!(i, IrInstruction::Cmp { .. })
+        matches!(i, IrInstruction::Test { .. })
+    });
+    // test dl, cl (84 ca)
+    check_instruction(&[0x84, 0xca], 0x1000, |i| {
+        matches!(i, IrInstruction::Test { .. })
+    });
+    // test al, 0x0f (a8 0f)
+    check_instruction(&[0xa8, 0x0f], 0x1000, |i| {
+        matches!(i, IrInstruction::Test { .. })
+    });
+    // test eax, 0x12345678 (a9 78 56 34 12)
+    check_instruction(&[0xa9, 0x78, 0x56, 0x34, 0x12], 0x1000, |i| {
+        matches!(i, IrInstruction::Test { .. })
+    });
+    // test cl, 1 (f6 c1 01)
+    check_instruction(&[0xf6, 0xc1, 0x01], 0x1000, |i| {
+        matches!(i, IrInstruction::Test { .. })
+    });
+    // test eax, 0x12345678 (f7 c0 78 56 34 12)
+    check_instruction(&[0xf7, 0xc0, 0x78, 0x56, 0x34, 0x12], 0x1000, |i| {
+        matches!(i, IrInstruction::Test { .. })
     });
 }
 

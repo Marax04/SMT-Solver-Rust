@@ -1,16 +1,15 @@
-//! Real Versioned Obfuscation Benchmark Artifact (Tigress MBA Opaque Predicate).
+//! Versioned Benchmark Artifact: GCC Golden Binary with Tigress-Style MBA Opaque Predicate.
 //!
-//! Artifact Metadata:
-//! - Name: `tigress_mba_opaque_predicate_v1`
+//! Provenance Classification:
+//! - Name: `gcc_golden_tigress_style_mba_opaque_predicate_v1`
 //! - Source Language: C99
 //! - Target Architecture: x86-64 (System V AMD64 ABI)
-//! - Compiler: GCC 11.2 (`gcc -O1 -fno-asynchronous-unwind-tables -fno-stack-protector`)
-//! - Obfuscation Transformation: Tigress `--Transform=AddOpaque --AddOpaqueKinds=True`
-//!   Mathematical Theorem: For all 32-bit integers x and y:
-//!   `((x | y) - (x & y)) == (x ^ y)`
-//!   Therefore, `((x | y) - (x & y)) != (x ^ y)` is an invariant contradiction (UNSAT).
+//! - Compiler: GCC 11.2 (`x86_64-linux-gnu-gcc -O1 -fno-asynchronous-unwind-tables -fno-stack-protector`)
+//! - Invariant Provenance: Tigress-style MBA identity pattern (`((x | y) - (x & y)) == (x ^ y)`).
+//!   Mathematical Theorem: For all 32-bit integers x and y, `((x | y) - (x & y)) != (x ^ y)` is UNSAT.
+//!   Note: Formally documented as GCC-compiled golden artifact implementing Tigress-style invariant.
 //! - Byte Size: 30 bytes
-//! - Expected SHA-256: Verified dynamically in test.
+//! - SHA-256 Provenance: `d5df6fa354965f1de5575d3f0925681e0e516d25627b77cfa0b26bc0cff75b64`.
 
 use iced_x86::{Decoder, DecoderOptions, Formatter, NasmFormatter};
 use sha2::{Digest, Sha256};

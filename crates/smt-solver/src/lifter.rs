@@ -79,6 +79,10 @@ pub enum IrInstruction {
         left: Operand,
         right: Operand,
     },
+    Test {
+        left: Operand,
+        right: Operand,
+    },
     Push {
         src: Operand,
     },
@@ -114,6 +118,7 @@ impl IrInstruction {
             IrInstruction::Nop
             | IrInstruction::Push { .. }
             | IrInstruction::Cmp { .. }
+            | IrInstruction::Test { .. }
             | IrInstruction::Jcc { .. }
             | IrInstruction::Jmp { .. } => None,
         }
@@ -152,7 +157,7 @@ impl IrInstruction {
                 add_op(dst, &mut regs);
                 add_op(src, &mut regs);
             }
-            IrInstruction::Cmp { left, right } => {
+            IrInstruction::Cmp { left, right } | IrInstruction::Test { left, right } => {
                 add_op(left, &mut regs);
                 add_op(right, &mut regs);
             }
@@ -197,7 +202,7 @@ impl BasicBlock {
         let mut sliced_rev = Vec::new();
 
         for inst in self.instructions.iter().rev() {
-            if matches!(inst, IrInstruction::Cmp { .. }) {
+            if matches!(inst, IrInstruction::Cmp { .. } | IrInstruction::Test { .. }) {
                 for u in inst.use_regs() {
                     needed.insert(u.to_string());
                 }
@@ -396,6 +401,7 @@ pub enum MemoryAddress {
     Physical(u64),
     Stack(i64),
     Named(String, i64),
+    Symbolic(TermId),
 }
 
 #[derive(Clone)]
@@ -409,6 +415,7 @@ struct SavedScope {
     memory: HashMap<u64, TermId>,
     stack_memory: HashMap<i64, TermId>,
     named_memory: HashMap<(String, i64), TermId>,
+    symbolic_memory: Vec<(TermId, TermId)>,
 }
 
 /// Symbolic lifter and path condition analyzer.
@@ -424,6 +431,7 @@ pub struct Lifter {
     memory: HashMap<u64, TermId>,
     stack_memory: HashMap<i64, TermId>,
     named_memory: HashMap<(String, i64), TermId>,
+    symbolic_memory: Vec<(TermId, TermId)>,
     scope_stack: Vec<SavedScope>,
 }
 
@@ -452,6 +460,7 @@ impl Lifter {
             memory: HashMap::new(),
             stack_memory: HashMap::new(),
             named_memory: HashMap::new(),
+            symbolic_memory: Vec::new(),
             scope_stack: Vec::new(),
         }
     }
@@ -468,6 +477,7 @@ impl Lifter {
             memory: self.memory.clone(),
             stack_memory: self.stack_memory.clone(),
             named_memory: self.named_memory.clone(),
+            symbolic_memory: self.symbolic_memory.clone(),
         });
     }
 
@@ -483,6 +493,7 @@ impl Lifter {
             self.memory = saved.memory;
             self.stack_memory = saved.stack_memory;
             self.named_memory = saved.named_memory;
+            self.symbolic_memory = saved.symbolic_memory;
             true
         } else {
             false
@@ -651,29 +662,71 @@ impl Lifter {
     ) -> MemoryAddress {
         let index_offset = if let Some((ref idx_reg, scale)) = index {
             let idx_term = self.read_reg(idx_reg, 64);
-            if let Some(concrete_idx) = self.eval_concrete_u64(idx_term) {
-                (concrete_idx.wrapping_mul(*scale as u64)) as i64
-            } else {
-                0
-            }
+            self.eval_concrete_u64(idx_term)
+                .map(|concrete_idx| (concrete_idx.wrapping_mul(*scale as u64)) as i64)
         } else {
-            0
+            Some(0)
         };
 
         if let Some(ref base_reg) = base {
             let base_term = self.read_reg(base_reg, 64);
-            if let Some(concrete_base) = self.eval_concrete_u64(base_term) {
-                let effective = (concrete_base as i64)
-                    .wrapping_add(index_offset)
-                    .wrapping_add(disp) as u64;
-                MemoryAddress::Physical(effective)
-            } else if base_reg == "rsp" {
-                MemoryAddress::Stack(disp + index_offset)
-            } else {
-                MemoryAddress::Named(base_reg.clone(), disp + index_offset)
+            let concrete_base = self.eval_concrete_u64(base_term);
+
+            match (concrete_base, index_offset) {
+                (Some(c_base), Some(idx_off)) => {
+                    let effective = (c_base as i64).wrapping_add(idx_off).wrapping_add(disp) as u64;
+                    MemoryAddress::Physical(effective)
+                }
+                _ if base_reg == "rsp" && index_offset.is_some() => {
+                    MemoryAddress::Stack(disp + index_offset.unwrap())
+                }
+                _ => {
+                    let disp_term = self
+                        .terms
+                        .bv_const((disp as u64).into(), 64, &mut self.sorts);
+                    let mut addr_term = if disp != 0 {
+                        self.terms
+                            .bv_binop(Op::BvAdd, base_term, disp_term)
+                            .unwrap_or(base_term)
+                    } else {
+                        base_term
+                    };
+                    if let Some((ref idx_reg, scale)) = index {
+                        let idx_term = self.read_reg(idx_reg, 64);
+                        let scale_term =
+                            self.terms
+                                .bv_const((*scale as u64).into(), 64, &mut self.sorts);
+                        if let Ok(scaled_idx) = self.terms.bv_binop(Op::BvMul, idx_term, scale_term)
+                        {
+                            if let Ok(combined) =
+                                self.terms.bv_binop(Op::BvAdd, addr_term, scaled_idx)
+                            {
+                                addr_term = combined;
+                            }
+                        }
+                    }
+                    MemoryAddress::Symbolic(addr_term)
+                }
             }
+        } else if let Some(idx_off) = index_offset {
+            MemoryAddress::Physical((disp + idx_off) as u64)
         } else {
-            MemoryAddress::Physical((disp + index_offset) as u64)
+            let disp_term = self
+                .terms
+                .bv_const((disp as u64).into(), 64, &mut self.sorts);
+            let mut addr_term = disp_term;
+            if let Some((ref idx_reg, scale)) = index {
+                let idx_term = self.read_reg(idx_reg, 64);
+                let scale_term = self
+                    .terms
+                    .bv_const((*scale as u64).into(), 64, &mut self.sorts);
+                if let Ok(scaled_idx) = self.terms.bv_binop(Op::BvMul, idx_term, scale_term) {
+                    if let Ok(combined) = self.terms.bv_binop(Op::BvAdd, addr_term, scaled_idx) {
+                        addr_term = combined;
+                    }
+                }
+            }
+            MemoryAddress::Symbolic(addr_term)
         }
     }
 
@@ -681,14 +734,22 @@ impl Lifter {
         match addr {
             MemoryAddress::Physical(phys) => {
                 let target = phys.wrapping_add(byte_offset as u64);
-                if let Some(&t) = self.memory.get(&target) {
+                let mut res = if let Some(&t) = self.memory.get(&target) {
                     t
                 } else {
                     let sort8 = self.sorts.bv(8);
                     let var = self.terms.var(format!("uninit_mem_{:x}", target), sort8);
                     self.memory.insert(target, var);
                     var
+                };
+                if !self.symbolic_memory.is_empty() {
+                    let target_term = self.terms.bv_const(target.into(), 64, &mut self.sorts);
+                    for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
+                        let eq = self.terms.eq(*s_addr, target_term, &self.sorts);
+                        res = self.terms.ite(eq, *s_val, res);
+                    }
                 }
+                res
             }
             MemoryAddress::Stack(stack_off) => {
                 let target = stack_off + byte_offset;
@@ -714,6 +775,25 @@ impl Lifter {
                     var
                 }
             }
+            MemoryAddress::Symbolic(base_term) => {
+                let off_term =
+                    self.terms
+                        .bv_const((byte_offset as u64).into(), 64, &mut self.sorts);
+                let byte_addr = if byte_offset != 0 {
+                    self.terms
+                        .bv_binop(Op::BvAdd, *base_term, off_term)
+                        .unwrap_or(*base_term)
+                } else {
+                    *base_term
+                };
+                let sort8 = self.sorts.bv(8);
+                let mut res = self.terms.var(format!("uninit_sym_{:?}", byte_addr), sort8);
+                for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
+                    let eq = self.terms.eq(*s_addr, byte_addr, &self.sorts);
+                    res = self.terms.ite(eq, *s_val, res);
+                }
+                res
+            }
         }
     }
 
@@ -730,6 +810,19 @@ impl Lifter {
             MemoryAddress::Named(name, base_off) => {
                 let target = (name.clone(), base_off + byte_offset);
                 self.named_memory.insert(target, val);
+            }
+            MemoryAddress::Symbolic(base_term) => {
+                let off_term =
+                    self.terms
+                        .bv_const((byte_offset as u64).into(), 64, &mut self.sorts);
+                let byte_addr = if byte_offset != 0 {
+                    self.terms
+                        .bv_binop(Op::BvAdd, *base_term, off_term)
+                        .unwrap_or(*base_term)
+                } else {
+                    *base_term
+                };
+                self.symbolic_memory.push((byte_addr, val));
             }
         }
     }
@@ -891,6 +984,31 @@ impl Lifter {
         }
     }
 
+    /// Updates logic ALU flags: CF=0, OF=0, ZF=(res == 0), SF=(msb(res) == 1).
+    fn update_logic_flags(&mut self, res: TermId) {
+        let sort = self.terms.sort_of(res);
+        let width = match self.sorts.get(sort) {
+            smt_core::sort::Sort::BitVec(w) => *w,
+            _ => 64,
+        };
+
+        let zero = self.terms.bv_const(0u32.into(), width, &mut self.sorts);
+        self.zero_flag = Some(self.terms.eq(res, zero, &self.sorts));
+
+        // CF and OF are cleared to 0 by logic instructions
+        self.carry_flag = Some(self.terms.false_id);
+        self.overflow_flag = Some(self.terms.false_id);
+
+        // SF: MSB of res is 1
+        if let Ok(msb) = self
+            .terms
+            .bv_extract(width - 1, width - 1, res, &mut self.sorts)
+        {
+            let one = self.terms.bv_const(1u32.into(), 1, &mut self.sorts);
+            self.sign_flag = Some(self.terms.eq(msb, one, &self.sorts));
+        }
+    }
+
     /// Executes a single instruction symbolically, updating internal register, flag, and memory states.
     pub fn step(&mut self, inst: &IrInstruction) {
         match inst {
@@ -931,6 +1049,7 @@ impl Lifter {
                 let d = self.eval_operand(dst);
                 let s = self.eval_operand(src);
                 if let Ok(res) = self.terms.bv_binop(Op::BvXor, d, s) {
+                    self.update_logic_flags(res);
                     match dst {
                         Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
                         Operand::Mem { .. } => self.write_memory(dst, res),
@@ -942,6 +1061,7 @@ impl Lifter {
                 let d = self.eval_operand(dst);
                 let s = self.eval_operand(src);
                 if let Ok(res) = self.terms.bv_binop(Op::BvAnd, d, s) {
+                    self.update_logic_flags(res);
                     match dst {
                         Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
                         Operand::Mem { .. } => self.write_memory(dst, res),
@@ -953,11 +1073,19 @@ impl Lifter {
                 let d = self.eval_operand(dst);
                 let s = self.eval_operand(src);
                 if let Ok(res) = self.terms.bv_binop(Op::BvOr, d, s) {
+                    self.update_logic_flags(res);
                     match dst {
                         Operand::Reg(ref name, width) => self.write_reg(name, res, *width),
                         Operand::Mem { .. } => self.write_memory(dst, res),
                         Operand::Imm(..) => {}
                     }
+                }
+            }
+            IrInstruction::Test { left, right } => {
+                let l = self.eval_operand(left);
+                let r = self.eval_operand(right);
+                if let Ok(res) = self.terms.bv_binop(Op::BvAnd, l, r) {
+                    self.update_logic_flags(res);
                 }
             }
             IrInstruction::Cmp { left, right } => {
