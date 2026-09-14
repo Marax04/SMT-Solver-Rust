@@ -1,0 +1,13 @@
+[package]
+name = "smt-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+smt-core = { path = "../smt-core" }
+num-bigint = "0.4"
+num-rational = "0.4.2"
+num-traits = "0.2.19"

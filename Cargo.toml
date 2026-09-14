@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/smt-core",
+    "crates/smt-sat",
+    "crates/smt-preprocess",
+    "crates/smt-theories",
+    "crates/smt-parser",
+    "crates/smt-solver",
+    "crates/smt-mba",
+    "crates/smt-api",
+    "crates/smt-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["SMT-Solver-Rust Team"]
+license = "MIT OR Apache-2.0"
+rust-version = "1.75"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"

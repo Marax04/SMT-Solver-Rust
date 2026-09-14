@@ -1,0 +1,17 @@
+[package]
+name = "smt-solver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+smt-core = { path = "../smt-core" }
+smt-sat = { path = "../smt-sat" }
+smt-preprocess = { path = "../smt-preprocess" }
+smt-theories = { path = "../smt-theories" }
+smt-parser = { path = "../smt-parser" }
+num-bigint = "0.4"
+num-rational = "0.4.2"
+num-traits = "0.2.19"
