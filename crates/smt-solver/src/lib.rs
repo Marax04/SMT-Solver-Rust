@@ -12,7 +12,10 @@ pub mod validator;
 
 pub use crypto::{CryptoAlgorithm, CryptoMatch, CryptoScanner};
 pub use engine::{CheckSatResult, ScoreHeuristic, Solver};
-pub use lifter::{BasicBlock, BranchCondition, BranchResolution, IrInstruction, Lifter, Operand};
+pub use lifter::{
+    BasicBlock, BranchCondition, BranchResolution, DeobfuscationStatus, IrInstruction, Lifter,
+    Operand, ProofCarryingResolution,
+};
 pub use model::Model;
 pub use opaque::{
     FoldedTraceResult, OpaqueClassification, OpaquePredicateAnalyzer, PathConditionFolder,
