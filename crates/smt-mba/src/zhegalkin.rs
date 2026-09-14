@@ -26,7 +26,9 @@ impl Monomial {
 
     /// Monomial of a single variable.
     pub fn variable(var_idx: u32) -> Self {
-        Self { vars: vec![var_idx] }
+        Self {
+            vars: vec![var_idx],
+        }
     }
 
     /// Product of two monomials: A * B (with idempotence x * x = x).

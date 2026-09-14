@@ -140,8 +140,15 @@ fn test_vsids_reinsert_after_backtrack() {
     s2.add_clause(vec![x0.to_lit(), x1.to_neg_lit(), x3.to_neg_lit()]);
 
     let res = s2.solve();
-    assert_eq!(res, LBool::False, "Solver must conclude UNSAT after exploring conflicts via backtrack");
-    assert!(s2.stats.conflicts > 0, "At least one conflict and backtrack must have occurred");
+    assert_eq!(
+        res,
+        LBool::False,
+        "Solver must conclude UNSAT after exploring conflicts via backtrack"
+    );
+    assert!(
+        s2.stats.conflicts > 0,
+        "At least one conflict and backtrack must have occurred"
+    );
 
     // THE CRITICAL CHECK: after solve() finishes, backtrack_to(0) must have
     // re-inserted every variable back into the VSIDS heap.
@@ -185,11 +192,18 @@ fn test_assumption_conflict_resolution_unsat() {
     // Conflict resolution derives (!a). Backtrack level is 0 < assumption level 1.
     // Solver must immediately return UNSAT without continuing past level 0.
     let res = solver.solve_with_assumptions(&[a.to_lit()]);
-    assert_eq!(res, LBool::False, "Assumption conflict must yield UNSAT under assumptions");
+    assert_eq!(
+        res,
+        LBool::False,
+        "Assumption conflict must yield UNSAT under assumptions"
+    );
 
     // Without assumption a=true, formula is SAT (with a=false, b=true, c=false, d=false)
     let res_no_assump = solver.solve();
-    assert_eq!(res_no_assump, LBool::True, "Formula without assumption a=true is satisfiable");
+    assert_eq!(
+        res_no_assump,
+        LBool::True,
+        "Formula without assumption a=true is satisfiable"
+    );
     assert_eq!(solver.model_value(b), LBool::True);
 }
-

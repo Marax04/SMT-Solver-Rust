@@ -93,14 +93,8 @@ pub struct Bound {
 /// Undo history for simplex backtracking.
 #[derive(Debug, Clone)]
 enum SimplexUndo {
-    SetLowerBound {
-        var: SimplexVar,
-        old: Option<Bound>,
-    },
-    SetUpperBound {
-        var: SimplexVar,
-        old: Option<Bound>,
-    },
+    SetLowerBound { var: SimplexVar, old: Option<Bound> },
+    SetUpperBound { var: SimplexVar, old: Option<Bound> },
 }
 
 /// Dutertre-de Moura Simplex Tableau for Linear Real/Integer Arithmetic.
@@ -203,8 +197,11 @@ impl<'a> SimplexSolver<'a> {
                 if let (Some(ci), Some(cj)) = (c_i, c_j) {
                     if ci == &BigRational::one() && cj == &-BigRational::one() {
                         // row represents: s = vi - vj
-                        if let (Some(lb), Some(ub)) = (&self.lower_bounds[r], &self.upper_bounds[r]) {
-                            if lb.value >= DeltaRational::zero() && ub.value <= DeltaRational::zero() {
+                        if let (Some(lb), Some(ub)) = (&self.lower_bounds[r], &self.upper_bounds[r])
+                        {
+                            if lb.value >= DeltaRational::zero()
+                                && ub.value <= DeltaRational::zero()
+                            {
                                 return true;
                             }
                         }
@@ -220,8 +217,11 @@ impl<'a> SimplexSolver<'a> {
                         }
                     } else if ci == &-BigRational::one() && cj == &BigRational::one() {
                         // row represents: s = vj - vi
-                        if let (Some(lb), Some(ub)) = (&self.lower_bounds[r], &self.upper_bounds[r]) {
-                            if lb.value >= DeltaRational::zero() && ub.value <= DeltaRational::zero() {
+                        if let (Some(lb), Some(ub)) = (&self.lower_bounds[r], &self.upper_bounds[r])
+                        {
+                            if lb.value >= DeltaRational::zero()
+                                && ub.value <= DeltaRational::zero()
+                            {
                                 return true;
                             }
                         }
@@ -255,7 +255,8 @@ impl<'a> SimplexSolver<'a> {
             None => true,
         };
         if should_update {
-            self.undo_stack.push(SimplexUndo::SetLowerBound { var, old });
+            self.undo_stack
+                .push(SimplexUndo::SetLowerBound { var, old });
             self.lower_bounds[var] = Some(bound);
         }
     }
@@ -268,7 +269,8 @@ impl<'a> SimplexSolver<'a> {
             None => true,
         };
         if should_update {
-            self.undo_stack.push(SimplexUndo::SetUpperBound { var, old });
+            self.undo_stack
+                .push(SimplexUndo::SetUpperBound { var, old });
             self.upper_bounds[var] = Some(bound);
         }
     }
@@ -467,7 +469,9 @@ impl<'a> SimplexSolver<'a> {
                     }
 
                     for (&xj, a_ij) in &self.tableau[xi] {
-                        if (a_ij.is_positive() && is_above_upper) || (a_ij.is_negative() && !is_above_upper) {
+                        if (a_ij.is_positive() && is_above_upper)
+                            || (a_ij.is_negative() && !is_above_upper)
+                        {
                             if let Some(lb) = &self.lower_bounds[xj] {
                                 if let Some(lit) = lb.reason {
                                     conflict.push(!lit);
@@ -516,70 +520,98 @@ impl<'a> Theory for SimplexSolver<'a> {
                     match op {
                         Op::Le => {
                             if lit.is_pos() {
-                                self.set_upper_bound(var, Bound {
-                                    value: DeltaRational::from_rational(val),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::from_rational(val),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
                                 // !(x <= val) <=> x > val <=> x >= val + delta
-                                self.set_lower_bound(var, Bound {
-                                    value: DeltaRational::new(val, BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::new(val, BigRational::one()),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Lt => {
                             if lit.is_pos() {
                                 // x < val <=> x <= val - delta
-                                self.set_upper_bound(var, Bound {
-                                    value: DeltaRational::new(val, -BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::new(val, -BigRational::one()),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
                                 // !(x < val) <=> x >= val
-                                self.set_lower_bound(var, Bound {
-                                    value: DeltaRational::from_rational(val),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::from_rational(val),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Ge => {
                             if lit.is_pos() {
-                                self.set_lower_bound(var, Bound {
-                                    value: DeltaRational::from_rational(val),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::from_rational(val),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_upper_bound(var, Bound {
-                                    value: DeltaRational::new(val, -BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::new(val, -BigRational::one()),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Gt => {
                             if lit.is_pos() {
-                                self.set_lower_bound(var, Bound {
-                                    value: DeltaRational::new(val, BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::new(val, BigRational::one()),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_upper_bound(var, Bound {
-                                    value: DeltaRational::from_rational(val),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    var,
+                                    Bound {
+                                        value: DeltaRational::from_rational(val),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
-                        Op::Eq => {
-                            if lit.is_pos() {
-                                self.set_lower_bound(var, Bound {
+                        Op::Eq if lit.is_pos() => {
+                            self.set_lower_bound(
+                                var,
+                                Bound {
                                     value: DeltaRational::from_rational(val.clone()),
                                     reason: Some(lit),
-                                });
-                                self.set_upper_bound(var, Bound {
+                                },
+                            );
+                            self.set_upper_bound(
+                                var,
+                                Bound {
                                     value: DeltaRational::from_rational(val),
                                     reason: Some(lit),
-                                });
-                            }
+                                },
+                            );
                         }
                         _ => {}
                     }
@@ -594,67 +626,107 @@ impl<'a> Theory for SimplexSolver<'a> {
                     match op {
                         Op::Le => {
                             if lit.is_pos() {
-                                self.set_upper_bound(s, Bound {
-                                    value: DeltaRational::zero(),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::zero(),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_lower_bound(s, Bound {
-                                    value: DeltaRational::new(BigRational::zero(), BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::new(
+                                            BigRational::zero(),
+                                            BigRational::one(),
+                                        ),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Lt => {
                             if lit.is_pos() {
-                                self.set_upper_bound(s, Bound {
-                                    value: DeltaRational::new(BigRational::zero(), -BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::new(
+                                            BigRational::zero(),
+                                            -BigRational::one(),
+                                        ),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_lower_bound(s, Bound {
-                                    value: DeltaRational::zero(),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::zero(),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Ge => {
                             if lit.is_pos() {
-                                self.set_lower_bound(s, Bound {
-                                    value: DeltaRational::zero(),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::zero(),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_upper_bound(s, Bound {
-                                    value: DeltaRational::new(BigRational::zero(), -BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::new(
+                                            BigRational::zero(),
+                                            -BigRational::one(),
+                                        ),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
                         Op::Gt => {
                             if lit.is_pos() {
-                                self.set_lower_bound(s, Bound {
-                                    value: DeltaRational::new(BigRational::zero(), BigRational::one()),
-                                    reason: Some(lit),
-                                });
+                                self.set_lower_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::new(
+                                            BigRational::zero(),
+                                            BigRational::one(),
+                                        ),
+                                        reason: Some(lit),
+                                    },
+                                );
                             } else {
-                                self.set_upper_bound(s, Bound {
-                                    value: DeltaRational::zero(),
-                                    reason: Some(lit),
-                                });
+                                self.set_upper_bound(
+                                    s,
+                                    Bound {
+                                        value: DeltaRational::zero(),
+                                        reason: Some(lit),
+                                    },
+                                );
                             }
                         }
-                        Op::Eq => {
-                            if lit.is_pos() {
-                                self.set_lower_bound(s, Bound {
+                        Op::Eq if lit.is_pos() => {
+                            self.set_lower_bound(
+                                s,
+                                Bound {
                                     value: DeltaRational::zero(),
                                     reason: Some(lit),
-                                });
-                                self.set_upper_bound(s, Bound {
+                                },
+                            );
+                            self.set_upper_bound(
+                                s,
+                                Bound {
                                     value: DeltaRational::zero(),
                                     reason: Some(lit),
-                                });
-                            }
+                                },
+                            );
                         }
                         _ => {}
                     }

@@ -32,7 +32,11 @@ impl<'a> ConstantFolder<'a> {
             return id;
         }
         let term_data = self.terms.get(id).clone();
-        let folded_args: Vec<TermId> = term_data.args.iter().map(|&arg| self.fold_term(arg)).collect();
+        let folded_args: Vec<TermId> = term_data
+            .args
+            .iter()
+            .map(|&arg| self.fold_term(arg))
+            .collect();
 
         match &term_data.op {
             // --- Boolean ops ---
@@ -49,10 +53,13 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::And => {
-                if folded_args.iter().any(|&a| a == self.terms.false_id) {
+                if folded_args.contains(&self.terms.false_id) {
                     return self.terms.false_id;
                 }
-                let non_true: Vec<TermId> = folded_args.into_iter().filter(|&a| a != self.terms.true_id).collect();
+                let non_true: Vec<TermId> = folded_args
+                    .into_iter()
+                    .filter(|&a| a != self.terms.true_id)
+                    .collect();
                 if non_true.is_empty() {
                     return self.terms.true_id;
                 }
@@ -62,10 +69,13 @@ impl<'a> ConstantFolder<'a> {
                 return self.terms.intern(Op::And, non_true, self.sorts.bool_sort);
             }
             Op::Or => {
-                if folded_args.iter().any(|&a| a == self.terms.true_id) {
+                if folded_args.contains(&self.terms.true_id) {
                     return self.terms.true_id;
                 }
-                let non_false: Vec<TermId> = folded_args.into_iter().filter(|&a| a != self.terms.false_id).collect();
+                let non_false: Vec<TermId> = folded_args
+                    .into_iter()
+                    .filter(|&a| a != self.terms.false_id)
+                    .collect();
                 if non_false.is_empty() {
                     return self.terms.false_id;
                 }
@@ -125,25 +135,45 @@ impl<'a> ConstantFolder<'a> {
                 }
                 let op_a = self.terms.op_of(a).clone();
                 let op_b = self.terms.op_of(b).clone();
-                if let (Op::BvConst { value: v1, .. }, Op::BvConst { value: v2, .. }) = (&op_a, &op_b) {
-                    return if v1 == v2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::BvConst { value: v1, .. }, Op::BvConst { value: v2, .. }) =
+                    (&op_a, &op_b)
+                {
+                    return if v1 == v2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
                 if let (Op::IntConst(i1), Op::IntConst(i2)) = (&op_a, &op_b) {
-                    return if i1 == i2 { self.terms.true_id } else { self.terms.false_id };
+                    return if i1 == i2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
                 if let (Op::RealConst(r1), Op::RealConst(r2)) = (&op_a, &op_b) {
-                    return if r1 == r2 { self.terms.true_id } else { self.terms.false_id };
+                    return if r1 == r2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             // --- Bit-Vector constant evaluations ---
             Op::BvAdd => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let sum = (v1 + v2) & bv_mask(w1);
                     return self.terms.bv_const(sum, w1, self.sorts);
                 }
             }
             Op::BvSub => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let mask = bv_mask(w1);
                     let modulus = BigUint::from(1u32) << w1;
                     let diff = (v1 + &modulus - (v2 & &mask)) & mask;
@@ -151,13 +181,19 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvMul => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let prod = (v1 * v2) & bv_mask(w1);
                     return self.terms.bv_const(prod, w1, self.sorts);
                 }
             }
             Op::BvUdiv => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     if v2.is_zero() {
                         // SMT-LIB division by zero yields 2^w - 1 (all ones)
                         return self.terms.bv_const(bv_mask(w1), w1, self.sorts);
@@ -167,7 +203,10 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvUrem => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     if v2.is_zero() {
                         return self.terms.bv_const(v1, w1, self.sorts);
                     }
@@ -176,19 +215,28 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvAnd => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let res = (v1 & v2) & bv_mask(w1);
                     return self.terms.bv_const(res, w1, self.sorts);
                 }
             }
             Op::BvOr => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let res = (v1 | v2) & bv_mask(w1);
                     return self.terms.bv_const(res, w1, self.sorts);
                 }
             }
             Op::BvXor => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let res = (v1 ^ v2) & bv_mask(w1);
                     return self.terms.bv_const(res, w1, self.sorts);
                 }
@@ -200,7 +248,10 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvShl => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let shift = v2.to_usize().unwrap_or(w1 as usize);
                     let res = if shift >= w1 as usize {
                         BigUint::zero()
@@ -211,7 +262,10 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvLshr => {
-                if let (Some((v1, w1)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let shift = v2.to_usize().unwrap_or(w1 as usize);
                     let res = if shift >= w1 as usize {
                         BigUint::zero()
@@ -222,7 +276,10 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvConcat => {
-                if let (Some((v1, w1)), Some((v2, w2))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
+                if let (Some((v1, w1)), Some((v2, w2))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
                     let res = ((v1 << w2) | v2) & bv_mask(w1 + w2);
                     return self.terms.bv_const(res, w1 + w2, self.sorts);
                 }
@@ -236,28 +293,58 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::BvUlt => {
-                if let (Some((v1, _)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
-                    return if v1 < v2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Some((v1, _)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
+                    return if v1 < v2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::BvUle => {
-                if let (Some((v1, _)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
-                    return if v1 <= v2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Some((v1, _)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
+                    return if v1 <= v2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::BvUgt => {
-                if let (Some((v1, _)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
-                    return if v1 > v2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Some((v1, _)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
+                    return if v1 > v2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::BvUge => {
-                if let (Some((v1, _)), Some((v2, _))) = (self.as_bv_const(folded_args[0]), self.as_bv_const(folded_args[1])) {
-                    return if v1 >= v2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Some((v1, _)), Some((v2, _))) = (
+                    self.as_bv_const(folded_args[0]),
+                    self.as_bv_const(folded_args[1]),
+                ) {
+                    return if v1 >= v2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             // --- Arithmetic constant evaluations ---
             Op::Add => {
-                let all_int = folded_args.iter().all(|&a| matches!(self.terms.op_of(a), Op::IntConst(_)));
+                let all_int = folded_args
+                    .iter()
+                    .all(|&a| matches!(self.terms.op_of(a), Op::IntConst(_)));
                 if all_int && !folded_args.is_empty() {
                     let mut sum = BigInt::zero();
                     for &a in &folded_args {
@@ -267,7 +354,9 @@ impl<'a> ConstantFolder<'a> {
                     }
                     return self.terms.int_const(sum, self.sorts);
                 }
-                let all_real = folded_args.iter().all(|&a| matches!(self.terms.op_of(a), Op::RealConst(_)));
+                let all_real = folded_args
+                    .iter()
+                    .all(|&a| matches!(self.terms.op_of(a), Op::RealConst(_)));
                 if all_real && !folded_args.is_empty() {
                     let mut sum = BigRational::zero();
                     for &a in &folded_args {
@@ -280,16 +369,24 @@ impl<'a> ConstantFolder<'a> {
             }
             Op::Sub => {
                 if folded_args.len() == 2 {
-                    if let (Op::IntConst(i1), Op::IntConst(i2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
+                    if let (Op::IntConst(i1), Op::IntConst(i2)) = (
+                        self.terms.op_of(folded_args[0]),
+                        self.terms.op_of(folded_args[1]),
+                    ) {
                         return self.terms.int_const(i1 - i2, self.sorts);
                     }
-                    if let (Op::RealConst(r1), Op::RealConst(r2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
+                    if let (Op::RealConst(r1), Op::RealConst(r2)) = (
+                        self.terms.op_of(folded_args[0]),
+                        self.terms.op_of(folded_args[1]),
+                    ) {
                         return self.terms.real_const(r1 - r2, self.sorts);
                     }
                 }
             }
             Op::Mul => {
-                let all_int = folded_args.iter().all(|&a| matches!(self.terms.op_of(a), Op::IntConst(_)));
+                let all_int = folded_args
+                    .iter()
+                    .all(|&a| matches!(self.terms.op_of(a), Op::IntConst(_)));
                 if all_int && !folded_args.is_empty() {
                     let mut prod = BigInt::from(1);
                     for &a in &folded_args {
@@ -299,7 +396,9 @@ impl<'a> ConstantFolder<'a> {
                     }
                     return self.terms.int_const(prod, self.sorts);
                 }
-                let all_real = folded_args.iter().all(|&a| matches!(self.terms.op_of(a), Op::RealConst(_)));
+                let all_real = folded_args
+                    .iter()
+                    .all(|&a| matches!(self.terms.op_of(a), Op::RealConst(_)));
                 if all_real && !folded_args.is_empty() {
                     let mut prod = BigRational::from_integer(BigInt::from(1));
                     for &a in &folded_args {
@@ -311,35 +410,91 @@ impl<'a> ConstantFolder<'a> {
                 }
             }
             Op::Lt => {
-                if let (Op::IntConst(i1), Op::IntConst(i2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if i1 < i2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::IntConst(i1), Op::IntConst(i2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if i1 < i2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
-                if let (Op::RealConst(r1), Op::RealConst(r2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if r1 < r2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::RealConst(r1), Op::RealConst(r2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if r1 < r2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::Le => {
-                if let (Op::IntConst(i1), Op::IntConst(i2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if i1 <= i2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::IntConst(i1), Op::IntConst(i2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if i1 <= i2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
-                if let (Op::RealConst(r1), Op::RealConst(r2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if r1 <= r2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::RealConst(r1), Op::RealConst(r2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if r1 <= r2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::Gt => {
-                if let (Op::IntConst(i1), Op::IntConst(i2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if i1 > i2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::IntConst(i1), Op::IntConst(i2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if i1 > i2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
-                if let (Op::RealConst(r1), Op::RealConst(r2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if r1 > r2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::RealConst(r1), Op::RealConst(r2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if r1 > r2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             Op::Ge => {
-                if let (Op::IntConst(i1), Op::IntConst(i2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if i1 >= i2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::IntConst(i1), Op::IntConst(i2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if i1 >= i2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
-                if let (Op::RealConst(r1), Op::RealConst(r2)) = (self.terms.op_of(folded_args[0]), self.terms.op_of(folded_args[1])) {
-                    return if r1 >= r2 { self.terms.true_id } else { self.terms.false_id };
+                if let (Op::RealConst(r1), Op::RealConst(r2)) = (
+                    self.terms.op_of(folded_args[0]),
+                    self.terms.op_of(folded_args[1]),
+                ) {
+                    return if r1 >= r2 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    };
                 }
             }
             _ => {}

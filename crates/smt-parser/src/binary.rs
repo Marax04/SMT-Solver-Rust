@@ -357,7 +357,7 @@ fn encode_op(buf: &mut Vec<u8>, op: &Op) {
         Op::IsInt => buf.push(64),
         Op::ConstArray(sort_id) => {
             buf.push(65);
-            encode_u32(buf, sort_id.0 as u32);
+            encode_u32(buf, sort_id.0);
         }
     }
 }

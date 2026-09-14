@@ -1,4 +1,4 @@
-﻿//! 1-bit space truth table representation for bitwise Boolean expressions.
+//! 1-bit space truth table representation for bitwise Boolean expressions.
 
 use smt_core::term::{Op, TermArena, TermId};
 use std::collections::HashMap;
@@ -19,10 +19,6 @@ impl TruthTable {
     pub const VAR2: Self = Self(0xF0F0);
     /// Variable 3 projection (pattern: 0000000011111111).
     pub const VAR3: Self = Self(0xFF00);
-
-    pub fn not(self) -> Self {
-        Self(!self.0)
-    }
 
     pub fn and(self, other: Self) -> Self {
         Self(self.0 & other.0)
@@ -63,7 +59,7 @@ impl TruthTable {
             }
             Op::BvNot => {
                 let inner = Self::from_term(term.args[0], terms, var_map)?;
-                Some(inner.not())
+                Some(!inner)
             }
             Op::BvAnd => {
                 let a = Self::from_term(term.args[0], terms, var_map)?;
@@ -82,5 +78,13 @@ impl TruthTable {
             }
             _ => None,
         }
+    }
+}
+
+impl std::ops::Not for TruthTable {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Self(!self.0)
     }
 }

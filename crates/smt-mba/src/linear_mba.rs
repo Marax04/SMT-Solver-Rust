@@ -19,9 +19,9 @@ impl LinearMbaVector {
 
     pub fn from_truth_table(tt: TruthTable, coeff: i64) -> Self {
         let mut vals = [0; 16];
-        for i in 0..16 {
+        for (i, val) in vals.iter_mut().enumerate() {
             if (tt.0 >> i) & 1 == 1 {
-                vals[i] = coeff;
+                *val = coeff;
             }
         }
         Self { values: vals }

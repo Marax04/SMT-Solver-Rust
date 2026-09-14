@@ -106,7 +106,11 @@ impl<'a> Rewriter<'a> {
                 }
             }
             Op::Add => {
-                let non_zero: Vec<TermId> = rewritten_args.iter().copied().filter(|&a| !self.is_int_zero(a)).collect();
+                let non_zero: Vec<TermId> = rewritten_args
+                    .iter()
+                    .copied()
+                    .filter(|&a| !self.is_int_zero(a))
+                    .collect();
                 if non_zero.is_empty() {
                     return self.terms.int_const(BigInt::zero(), self.sorts);
                 }
@@ -131,13 +135,17 @@ impl<'a> Rewriter<'a> {
                 if rewritten_args.len() <= 1 {
                     return self.terms.true_id;
                 } else if rewritten_args.len() == 2 {
-                    let eq = self.terms.eq(rewritten_args[0], rewritten_args[1], self.sorts);
+                    let eq = self
+                        .terms
+                        .eq(rewritten_args[0], rewritten_args[1], self.sorts);
                     return self.terms.not(eq);
                 } else {
                     let mut diffs = Vec::new();
                     for i in 0..rewritten_args.len() {
                         for j in (i + 1)..rewritten_args.len() {
-                            let eq = self.terms.eq(rewritten_args[i], rewritten_args[j], self.sorts);
+                            let eq =
+                                self.terms
+                                    .eq(rewritten_args[i], rewritten_args[j], self.sorts);
                             diffs.push(self.terms.not(eq));
                         }
                     }

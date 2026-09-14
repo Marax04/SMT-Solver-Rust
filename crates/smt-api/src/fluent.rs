@@ -51,7 +51,9 @@ impl Context {
     /// Creates a bit-vector constant from integer.
     pub fn bv_const(&mut self, val: u64, width: u32) -> Expr {
         let sort = self.sorts.bv(width);
-        let id = self.terms.bv_const(BigUint::from(val), width, &mut self.sorts);
+        let id = self
+            .terms
+            .bv_const(BigUint::from(val), width, &mut self.sorts);
         Expr { id, sort }
     }
 
@@ -108,20 +110,29 @@ impl Context {
     pub fn and(&mut self, args: &[Expr]) -> Expr {
         let term_ids: Vec<TermId> = args.iter().map(|e| e.id).collect();
         let id = self.terms.and(term_ids, &self.sorts);
-        Expr { id, sort: self.sorts.bool_sort }
+        Expr {
+            id,
+            sort: self.sorts.bool_sort,
+        }
     }
 
     /// Boolean OR.
     pub fn or(&mut self, args: &[Expr]) -> Expr {
         let term_ids: Vec<TermId> = args.iter().map(|e| e.id).collect();
         let id = self.terms.or(term_ids, &self.sorts);
-        Expr { id, sort: self.sorts.bool_sort }
+        Expr {
+            id,
+            sort: self.sorts.bool_sort,
+        }
     }
 
     /// If-then-else.
     pub fn ite(&mut self, cond: Expr, then_b: Expr, else_b: Expr) -> Expr {
         let id = self.terms.ite(cond.id, then_b.id, else_b.id);
-        Expr { id, sort: then_b.sort }
+        Expr {
+            id,
+            sort: then_b.sort,
+        }
     }
 }
 
@@ -166,7 +177,10 @@ impl FluentSolver {
     /// Creates a bit-vector constant from integer.
     pub fn bv_const(&mut self, val: u64, width: u32) -> Expr {
         let sort = self.inner.sorts.bv(width);
-        let id = self.inner.terms.bv_const(BigUint::from(val), width, &mut self.inner.sorts);
+        let id = self
+            .inner
+            .terms
+            .bv_const(BigUint::from(val), width, &mut self.inner.sorts);
         Expr { id, sort }
     }
 
@@ -223,20 +237,29 @@ impl FluentSolver {
     pub fn and(&mut self, args: &[Expr]) -> Expr {
         let term_ids: Vec<TermId> = args.iter().map(|e| e.id).collect();
         let id = self.inner.terms.and(term_ids, &self.inner.sorts);
-        Expr { id, sort: self.inner.sorts.bool_sort }
+        Expr {
+            id,
+            sort: self.inner.sorts.bool_sort,
+        }
     }
 
     /// Boolean OR.
     pub fn or(&mut self, args: &[Expr]) -> Expr {
         let term_ids: Vec<TermId> = args.iter().map(|e| e.id).collect();
         let id = self.inner.terms.or(term_ids, &self.inner.sorts);
-        Expr { id, sort: self.inner.sorts.bool_sort }
+        Expr {
+            id,
+            sort: self.inner.sorts.bool_sort,
+        }
     }
 
     /// If-then-else.
     pub fn ite(&mut self, cond: Expr, then_b: Expr, else_b: Expr) -> Expr {
         let id = self.inner.terms.ite(cond.id, then_b.id, else_b.id);
-        Expr { id, sort: then_b.sort }
+        Expr {
+            id,
+            sort: then_b.sort,
+        }
     }
 
     /// Checks satisfiability.

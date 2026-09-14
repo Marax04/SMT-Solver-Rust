@@ -55,7 +55,9 @@ impl RestartStrategy {
         self.conflicts_since_restart += 1;
 
         // Glucose restart condition: recent clauses have notably higher LBD than global average
-        if self.conflicts_since_restart >= self.min_conflicts && self.fast_lbd > 1.25 * self.slow_lbd {
+        if self.conflicts_since_restart >= self.min_conflicts
+            && self.fast_lbd > 1.25 * self.slow_lbd
+        {
             self.on_restart();
             return true;
         }
@@ -89,5 +91,5 @@ fn luby(mut i: usize) -> usize {
             i -= size;
         }
     }
-    (size + 1) / 2
+    size.div_ceil(2)
 }

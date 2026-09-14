@@ -23,7 +23,11 @@ fn test_decrypt_key_enumeration_multiple_solutions() {
 
     // Enumerate models up to 10
     let models = solver.enumerate_models(&["key"], 10);
-    assert_eq!(models.len(), 3, "Should discover exactly the 3 distinct solutions");
+    assert_eq!(
+        models.len(),
+        3,
+        "Should discover exactly the 3 distinct solutions"
+    );
 
     let mut found_keys = Vec::new();
     for m in &models {
@@ -43,8 +47,12 @@ fn test_decrypt_unique_key_certification() {
     solver.set_logic("QF_BV");
 
     // Crackme verification equation: key ^ 0x1337 == 0xbeef
-    let mask = solver.terms.bv_const(0x1337u32.into(), 16, &mut solver.sorts);
-    let target = solver.terms.bv_const(0xbeefu32.into(), 16, &mut solver.sorts);
+    let mask = solver
+        .terms
+        .bv_const(0x1337u32.into(), 16, &mut solver.sorts);
+    let target = solver
+        .terms
+        .bv_const(0xbeefu32.into(), 16, &mut solver.sorts);
     let xor_term = solver.terms.bv_binop(Op::BvXor, key, mask).unwrap();
     let eq = solver.terms.eq(xor_term, target, &solver.sorts);
     solver.assert_formula(eq);
@@ -89,7 +97,11 @@ fn test_decrypt_scored_model_enumeration() {
     assert_eq!(scored_ascii.len(), 3);
     let top_ascii = scored_ascii[0].0.get("key").unwrap();
     if let Value::BitVec { value, .. } = top_ascii {
-        assert_eq!(*value, 0x41u32.into(), "ASCII printable 'A' should score highest");
+        assert_eq!(
+            *value,
+            0x41u32.into(),
+            "ASCII printable 'A' should score highest"
+        );
     } else {
         panic!("Expected bitvector");
     }
@@ -112,9 +124,12 @@ fn test_decrypt_scored_model_enumeration() {
     assert_eq!(scored_hw.len(), 3);
     let top_hw = scored_hw[0].0.get("key").unwrap();
     if let Value::BitVec { value, .. } = top_hw {
-        assert_eq!(*value, 0x01u32.into(), "0x01 with 1 set bit should score highest on LowHammingWeight");
+        assert_eq!(
+            *value,
+            0x01u32.into(),
+            "0x01 with 1 set bit should score highest on LowHammingWeight"
+        );
     } else {
         panic!("Expected bitvector");
     }
 }
-

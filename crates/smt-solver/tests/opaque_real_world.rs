@@ -1,4 +1,4 @@
-﻿//! Real-world Opaque Predicate benchmarks from obfuscation literature (OLLVM, Tigress, Crackmes).
+//! Real-world Opaque Predicate benchmarks from obfuscation literature (OLLVM, Tigress, Crackmes).
 //!
 //! Validates contextual classification and symbolic path condition trace folding against
 //! standard obfuscation patterns used in real-world binaries.
@@ -92,17 +92,35 @@ fn test_real_world_crackme_contextual_key_trace_pruning() {
     let pc = vec![pc_len, pc_key];
 
     let class_real = solver.check_opaque_contextual(&pc, p_real);
-    assert_eq!(class_real, OpaqueClassification::AlwaysTrue,
-        "key0 == 0x48 is contextually AlwaysTrue under PC");
+    assert_eq!(
+        class_real,
+        OpaqueClassification::AlwaysTrue,
+        "key0 == 0x48 is contextually AlwaysTrue under PC"
+    );
 
     let class_bomb = solver.check_opaque_contextual(&pc, p_bomb);
-    assert_eq!(class_bomb, OpaqueClassification::AlwaysFalse,
-        "key0 == 0x00 is contextually AlwaysFalse under PC");
+    assert_eq!(
+        class_bomb,
+        OpaqueClassification::AlwaysFalse,
+        "key0 == 0x00 is contextually AlwaysFalse under PC"
+    );
 
     let trace = vec![
-        TraceBranch { block_id: 10, predicate: pc_key, taken: true },
-        TraceBranch { block_id: 20, predicate: p_bomb, taken: false },
-        TraceBranch { block_id: 30, predicate: p_real, taken: true },
+        TraceBranch {
+            block_id: 10,
+            predicate: pc_key,
+            taken: true,
+        },
+        TraceBranch {
+            block_id: 20,
+            predicate: p_bomb,
+            taken: false,
+        },
+        TraceBranch {
+            block_id: 30,
+            predicate: p_real,
+            taken: true,
+        },
     ];
 
     let folded = solver.fold_trace(&trace);
@@ -141,15 +159,21 @@ fn test_tigress_bogus_dispatch_with_auxiliary_counter() {
     let loop_iter = solver.declare_const("loop_iter", bv32);
     let _aux_cnt = solver.declare_const("aux_cnt", bv32);
 
-    let zero   = solver.terms.bv_const(0u32.into(), 32, &mut solver.sorts);
-    let one    = solver.terms.bv_const(1u32.into(), 32, &mut solver.sorts);
+    let zero = solver.terms.bv_const(0u32.into(), 32, &mut solver.sorts);
+    let one = solver.terms.bv_const(1u32.into(), 32, &mut solver.sorts);
     let mask_ff = solver.terms.bv_const(0xFFu32.into(), 32, &mut solver.sorts);
 
     let iter_masked = solver.terms.bv_binop(Op::BvOr, loop_iter, zero).unwrap();
-    let iter_byte   = solver.terms.bv_binop(Op::BvAnd, iter_masked, mask_ff).unwrap();
-    let iter_p1     = solver.terms.bv_binop(Op::BvAdd, iter_byte, one).unwrap();
-    let product     = solver.terms.bv_binop(Op::BvMul, iter_byte, iter_p1).unwrap();
-    let lsb         = solver.terms.bv_binop(Op::BvAnd, product, one).unwrap();
+    let iter_byte = solver
+        .terms
+        .bv_binop(Op::BvAnd, iter_masked, mask_ff)
+        .unwrap();
+    let iter_p1 = solver.terms.bv_binop(Op::BvAdd, iter_byte, one).unwrap();
+    let product = solver
+        .terms
+        .bv_binop(Op::BvMul, iter_byte, iter_p1)
+        .unwrap();
+    let lsb = solver.terms.bv_binop(Op::BvAnd, product, one).unwrap();
     let dispatch_cond = solver.terms.eq(lsb, zero, &solver.sorts);
 
     let classification = solver.check_opaque(dispatch_cond);
@@ -170,31 +194,47 @@ fn test_tigress_hash_then_compare_opaque_with_xor_chain() {
     solver.set_logic("QF_BV");
 
     let secret = solver.declare_const("secret", bv32);
-    let v_dead = solver.terms.bv_const(0xDEADu32.into(), 32, &mut solver.sorts);
-    let v_beef = solver.terms.bv_const(0xBEEFu32.into(), 32, &mut solver.sorts);
-    let v_1234 = solver.terms.bv_const(0x1234u32.into(), 32, &mut solver.sorts);
-    let v_ffff = solver.terms.bv_const(0xFFFFu32.into(), 32, &mut solver.sorts);
-    let v_7276 = solver.terms.bv_const(0x7276u32.into(), 32, &mut solver.sorts);
+    let v_dead = solver
+        .terms
+        .bv_const(0xDEADu32.into(), 32, &mut solver.sorts);
+    let v_beef = solver
+        .terms
+        .bv_const(0xBEEFu32.into(), 32, &mut solver.sorts);
+    let v_1234 = solver
+        .terms
+        .bv_const(0x1234u32.into(), 32, &mut solver.sorts);
+    let v_ffff = solver
+        .terms
+        .bv_const(0xFFFFu32.into(), 32, &mut solver.sorts);
+    let v_7276 = solver
+        .terms
+        .bv_const(0x7276u32.into(), 32, &mut solver.sorts);
     let v_zero = solver.terms.bv_const(0u32.into(), 32, &mut solver.sorts);
 
     let pc_secret = solver.terms.eq(secret, v_dead, &solver.sorts);
 
-    let xored   = solver.terms.bv_binop(Op::BvXor, secret, v_beef).unwrap();
-    let added   = solver.terms.bv_binop(Op::BvAdd, xored, v_1234).unwrap();
+    let xored = solver.terms.bv_binop(Op::BvXor, secret, v_beef).unwrap();
+    let added = solver.terms.bv_binop(Op::BvAdd, xored, v_1234).unwrap();
     let hash_out = solver.terms.bv_binop(Op::BvAnd, added, v_ffff).unwrap();
 
-    let p_true  = solver.terms.eq(hash_out, v_7276, &solver.sorts);
+    let p_true = solver.terms.eq(hash_out, v_7276, &solver.sorts);
     let p_false = solver.terms.eq(hash_out, v_zero, &solver.sorts);
 
     let pc = vec![pc_secret];
 
     let class_true = solver.check_opaque_contextual(&pc, p_true);
-    assert_eq!(class_true, OpaqueClassification::AlwaysTrue,
-        "Tigress hash-then-compare: hash(0xDEAD)==0x7276 must be AlwaysTrue");
+    assert_eq!(
+        class_true,
+        OpaqueClassification::AlwaysTrue,
+        "Tigress hash-then-compare: hash(0xDEAD)==0x7276 must be AlwaysTrue"
+    );
 
     let class_false = solver.check_opaque_contextual(&pc, p_false);
-    assert_eq!(class_false, OpaqueClassification::AlwaysFalse,
-        "Tigress hash-then-compare: hash(0xDEAD)==0 must be AlwaysFalse");
+    assert_eq!(
+        class_false,
+        OpaqueClassification::AlwaysFalse,
+        "Tigress hash-then-compare: hash(0xDEAD)==0 must be AlwaysFalse"
+    );
 }
 
 #[test]
@@ -208,13 +248,17 @@ fn test_tigress_nested_mba_invariant_with_side_effect_intermediates() {
     let bv32 = solver.sorts.bv(32);
     solver.set_logic("QF_BV");
 
-    let x       = solver.declare_const("x", bv32);
+    let x = solver.declare_const("x", bv32);
     let tmp1_var = solver.declare_const("tmp1", bv32);
     let tmp2_var = solver.declare_const("tmp2", bv32);
 
-    let mask_a = solver.terms.bv_const(0xAAAAAAAAu32.into(), 32, &mut solver.sorts);
-    let mask_5 = solver.terms.bv_const(0x55555555u32.into(), 32, &mut solver.sorts);
-    let zero   = solver.terms.bv_const(0u32.into(), 32, &mut solver.sorts);
+    let mask_a = solver
+        .terms
+        .bv_const(0xAAAAAAAAu32.into(), 32, &mut solver.sorts);
+    let mask_5 = solver
+        .terms
+        .bv_const(0x55555555u32.into(), 32, &mut solver.sorts);
+    let zero = solver.terms.bv_const(0u32.into(), 32, &mut solver.sorts);
 
     let tmp1_actual = solver.terms.bv_binop(Op::BvAnd, x, mask_a).unwrap();
     let pc_tmp1 = solver.terms.eq(tmp1_var, tmp1_actual, &solver.sorts);
@@ -222,9 +266,9 @@ fn test_tigress_nested_mba_invariant_with_side_effect_intermediates() {
     let tmp2_actual = solver.terms.bv_binop(Op::BvOr, x, mask_5).unwrap();
     let pc_tmp2 = solver.terms.eq(tmp2_var, tmp2_actual, &solver.sorts);
 
-    let x_xor_x  = solver.terms.bv_binop(Op::BvXor, x, x).unwrap();
+    let x_xor_x = solver.terms.bv_binop(Op::BvXor, x, x).unwrap();
     let x_plus_0 = solver.terms.bv_binop(Op::BvAdd, x, x_xor_x).unwrap();
-    let result   = solver.terms.bv_binop(Op::BvSub, x_plus_0, x).unwrap();
+    let result = solver.terms.bv_binop(Op::BvSub, x_plus_0, x).unwrap();
     let dispatch_cond = solver.terms.eq(result, zero, &solver.sorts);
 
     let pc = vec![pc_tmp1, pc_tmp2];

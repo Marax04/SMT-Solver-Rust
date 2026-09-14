@@ -99,7 +99,10 @@ fn test_mba_synthesis_linear_identity() {
     let mba_expr = terms.bv_binop(Op::BvAdd, xor_term, two_and).unwrap();
 
     let synthesized = IoProgramSynthesizer::synthesize(mba_expr, &mut terms, &mut sorts);
-    assert!(synthesized.is_some(), "Synthesis should find an equivalent simple expression");
+    assert!(
+        synthesized.is_some(),
+        "Synthesis should find an equivalent simple expression"
+    );
     let syn_term = synthesized.unwrap();
     let term = terms.get(syn_term);
     assert_eq!(term.op, Op::BvAdd);
@@ -157,7 +160,10 @@ fn test_gf2_mba_5_variables() {
     let mba_expr = terms.bv_binop(Op::BvSub, or_term, and_term).unwrap();
 
     let simplified = Gf2LinearMbaSimplifier::simplify(mba_expr, &mut terms, &mut sorts);
-    assert!(simplified.is_some(), "GF(2) simplifier should handle 5+ variable context");
+    assert!(
+        simplified.is_some(),
+        "GF(2) simplifier should handle 5+ variable context"
+    );
     let res = simplified.unwrap();
     let term = terms.get(res);
     assert_eq!(term.op, Op::BvXor);
@@ -207,7 +213,11 @@ fn test_gf2_matrix_rref_16_and_32_variables() {
     }
 
     let pivots16 = mat16.rref();
-    assert_eq!(pivots16.len(), n16, "16-variable invertible system must have full rank 16");
+    assert_eq!(
+        pivots16.len(),
+        n16,
+        "16-variable invertible system must have full rank 16"
+    );
     // Verify RREF properties: strictly increasing pivots, 1 on pivot, 0 elsewhere in column
     let mut prev_col = None;
     for (row, &col) in pivots16.iter().enumerate() {
@@ -218,7 +228,12 @@ fn test_gf2_matrix_rref_16_and_32_variables() {
         assert!(mat16.get(row, col), "Pivot position must be 1");
         for r in 0..n16 {
             if r != row {
-                assert!(!mat16.get(r, col), "Column {} must be zero outside pivot row {}", col, row);
+                assert!(
+                    !mat16.get(r, col),
+                    "Column {} must be zero outside pivot row {}",
+                    col,
+                    row
+                );
             }
         }
     }
@@ -240,7 +255,11 @@ fn test_gf2_matrix_rref_16_and_32_variables() {
     }
 
     let pivots32 = mat32.rref();
-    assert_eq!(pivots32.len(), n32, "32-variable multi-word system must have full rank 32");
+    assert_eq!(
+        pivots32.len(),
+        n32,
+        "32-variable multi-word system must have full rank 32"
+    );
     let mut prev_col32 = None;
     for (row, &col) in pivots32.iter().enumerate() {
         if let Some(prev) = prev_col32 {
@@ -288,11 +307,15 @@ fn test_zhegalkin_exhaustive_semantic_roundtrip() {
     let not_yz = terms.intern(Op::BvNot, vec![yz], bv1);
     let complex = terms.bv_binop(Op::BvOr, x_xor_y, not_yz).unwrap();
 
-    let test_cases = vec![("Majority", maj), ("Multiplexer", mux), ("Complex_MBA_Bool", complex)];
+    let test_cases = vec![
+        ("Majority", maj),
+        ("Multiplexer", mux),
+        ("Complex_MBA_Bool", complex),
+    ];
 
     for (name, orig_term) in test_cases {
-        let simplified = ZhegalkinPolynomial::simplify(orig_term, &mut terms, &mut sorts)
-            .unwrap_or(orig_term);
+        let simplified =
+            ZhegalkinPolynomial::simplify(orig_term, &mut terms, &mut sorts).unwrap_or(orig_term);
 
         // Exhaustively test all 2^3 = 8 truth table inputs
         let mut validator = ModelValidator::new();
@@ -304,9 +327,11 @@ fn test_zhegalkin_exhaustive_semantic_roundtrip() {
                     model.insert("y", smt_core::value::Value::new_bv(vy.into(), 1));
                     model.insert("z", smt_core::value::Value::new_bv(vz.into(), 1));
 
-                    let v_orig = validator.evaluate(orig_term, &model, &terms, &sorts)
+                    let v_orig = validator
+                        .evaluate(orig_term, &model, &terms, &sorts)
                         .expect("Original term should evaluate concretely");
-                    let v_simp = validator.evaluate(simplified, &model, &terms, &sorts)
+                    let v_simp = validator
+                        .evaluate(simplified, &model, &terms, &sorts)
                         .expect("Reconstructed Zhegalkin ANF term should evaluate concretely");
 
                     assert_eq!(
@@ -325,20 +350,26 @@ fn test_gf2_rref_scaling_curve() {
     use smt_mba::Gf2Matrix;
     use std::time::Instant;
 
-    // Scaling curve: RREF at 8, 16, 32, 64, 128 variables.
-    // Each matrix is n × 2n (augmented), filled with a deterministic banded pattern
-    // guaranteed to be full rank. Times are printed to validate sub-quadratic scaling.
+    // Statistically sound scaling curve: RREF at 8, 16, 32, 64, 128 variables.
+    // To eliminate measurement noise, cold-start timer artifacts, and CPU frequency
+    // scaling transients, each size runs:
+    //   1. Warm-up phase: 200 iterations discarded
+    //   2. Measurement phase: 500 timed iterations
+    //   3. Metrics: Mean, Min, Median, and Sample StdDev (in nanoseconds)
     let sizes: &[usize] = &[8, 16, 32, 64, 128];
+    const WARMUP_ITERS: usize = 200;
+    const BENCH_ITERS: usize = 500;
 
-    println!("\n[GF2 RREF Scaling Curve]");
-    println!("{:>8}  {:>10}  {:>10}  {:>10}", "vars (n)", "rows", "cols", "elapsed_us");
-    println!("{}", "-".repeat(48));
+    println!("\n[GF2 RREF Statistical Scaling Curve (500 iterations after 200 warm-up)]");
+    println!(
+        "{:>8}  {:>8}  {:>8}  {:>12}  {:>10}  {:>10}  {:>10}",
+        "vars (n)", "rows", "cols", "mean (ns)", "min (ns)", "median (ns)", "stddev (ns)"
+    );
+    println!("{}", "-".repeat(78));
 
-    for &n in sizes {
+    fn build_band_matrix(n: usize) -> Gf2Matrix {
         let cols = 2 * n; // augmented [A | I]
         let mut mat = Gf2Matrix::new(n, cols);
-
-        // Diagonal + two off-diagonals (band-3 pattern) → full rank for any n
         for i in 0..n {
             mat.set(i, i, true); // main diagonal
             if i + 1 < n {
@@ -350,42 +381,77 @@ fn test_gf2_rref_scaling_curve() {
             // Identity block on the right (columns n..2n)
             mat.set(i, n + i, true);
         }
+        mat
+    }
 
-        let t0 = Instant::now();
-        let pivots = mat.rref();
-        let elapsed = t0.elapsed();
+    for &n in sizes {
+        let cols = 2 * n;
+
+        // 1. Warm-up phase
+        for _ in 0..WARMUP_ITERS {
+            let mut mat = build_band_matrix(n);
+            let _ = mat.rref();
+        }
+
+        // 2. Timed measurement phase
+        let mut times_ns = Vec::with_capacity(BENCH_ITERS);
+        let mut last_mat = build_band_matrix(n);
+        let mut last_pivots = Vec::new();
+
+        for _ in 0..BENCH_ITERS {
+            let mut mat = build_band_matrix(n);
+            let t0 = Instant::now();
+            let pivots = mat.rref();
+            let elapsed_ns = t0.elapsed().as_nanos() as f64;
+            times_ns.push(elapsed_ns);
+            last_mat = mat;
+            last_pivots = pivots;
+        }
+
+        times_ns.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let count = times_ns.len() as f64;
+        let mean = times_ns.iter().sum::<f64>() / count;
+        let min = times_ns[0];
+        let median = times_ns[times_ns.len() / 2];
+        let variance = times_ns.iter().map(|&t| (t - mean).powi(2)).sum::<f64>() / (count - 1.0);
+        let stddev = variance.sqrt();
 
         println!(
-            "{:>8}  {:>10}  {:>10}  {:>10}",
-            n,
-            n,
-            cols,
-            elapsed.as_micros()
+            "{:>8}  {:>8}  {:>8}  {:>12.1}  {:>10.0}  {:>10.0}  {:>10.1}",
+            n, n, cols, mean, min, median, stddev
         );
 
-        // Correctness: must reach full rank
+        // 3. Correctness assertions: must reach full rank
         assert_eq!(
-            pivots.len(),
+            last_pivots.len(),
             n,
             "n={}: expected full rank {}, got {}",
-            n, n, pivots.len()
+            n,
+            n,
+            last_pivots.len()
         );
 
         // Verify RREF invariants: strict pivot column ordering,
         // 1 on pivot, 0 in every other row of same column.
         let mut prev_col: Option<usize> = None;
-        for (row, &col) in pivots.iter().enumerate() {
+        for (row, &col) in last_pivots.iter().enumerate() {
             if let Some(prev) = prev_col {
-                assert!(col > prev, "n={}: pivot cols must be strictly increasing", n);
+                assert!(
+                    col > prev,
+                    "n={}: pivot cols must be strictly increasing",
+                    n
+                );
             }
             prev_col = Some(col);
-            assert!(mat.get(row, col), "n={}: pivot position must be 1", n);
+            assert!(last_mat.get(row, col), "n={}: pivot position must be 1", n);
             for r in 0..n {
                 if r != row {
                     assert!(
-                        !mat.get(r, col),
-                        "n={}: column {} must be 0 outside pivot row {} (found 1 at row {})",
-                        n, col, row, r
+                        !last_mat.get(r, col),
+                        "n={}: non-pivot entry at ({}, {}) must be 0",
+                        n,
+                        r,
+                        col
                     );
                 }
             }
@@ -395,8 +461,8 @@ fn test_gf2_rref_scaling_curve() {
 
 #[test]
 fn test_zhegalkin_exhaustive_6_variables() {
-    use smt_mba::ZhegalkinPolynomial;
     use smt_core::term::Op;
+    use smt_mba::ZhegalkinPolynomial;
     use smt_solver::model::Model;
     use smt_solver::validator::ModelValidator;
 
@@ -428,8 +494,8 @@ fn test_zhegalkin_exhaustive_6_variables() {
     // Combined: Majority(a,b,c) XOR Parity(d,e,f)
     let combined = terms.bv_binop(Op::BvXor, maj_abc, parity_def).unwrap();
 
-    let simplified = ZhegalkinPolynomial::simplify(combined, &mut terms, &mut sorts)
-        .unwrap_or(combined);
+    let simplified =
+        ZhegalkinPolynomial::simplify(combined, &mut terms, &mut sorts).unwrap_or(combined);
 
     let var_names = ["a", "b", "c", "d", "e", "f"];
     let mut validator = ModelValidator::new();
@@ -442,9 +508,11 @@ fn test_zhegalkin_exhaustive_6_variables() {
             let val = (bits >> i) & 1;
             model.insert(name, smt_core::value::Value::new_bv(val.into(), 1));
         }
-        let v_orig = validator.evaluate(combined, &model, &terms, &sorts)
+        let v_orig = validator
+            .evaluate(combined, &model, &terms, &sorts)
             .expect("Original 6-var combined term must evaluate");
-        let v_simp = validator.evaluate(simplified, &model, &terms, &sorts)
+        let v_simp = validator
+            .evaluate(simplified, &model, &terms, &sorts)
             .expect("Zhegalkin-simplified 6-var term must evaluate");
         assert_eq!(
             v_orig, v_simp,
@@ -459,8 +527,8 @@ fn test_zhegalkin_exhaustive_6_variables() {
 
 #[test]
 fn test_zhegalkin_exhaustive_8_variables() {
-    use smt_mba::ZhegalkinPolynomial;
     use smt_core::term::Op;
+    use smt_mba::ZhegalkinPolynomial;
     use smt_solver::model::Model;
     use smt_solver::validator::ModelValidator;
 
@@ -468,8 +536,10 @@ fn test_zhegalkin_exhaustive_8_variables() {
     let mut terms = TermArena::new(&mut sorts);
     let bv1 = sorts.bv(1);
 
-    let v: Vec<_> = ["a","b","c","d","e","f","g","h"]
-        .iter().map(|&n| terms.var(n, bv1)).collect();
+    let v: Vec<_> = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        .iter()
+        .map(|&n| terms.var(n, bv1))
+        .collect();
 
     // f: carry-lookahead-style function over 8 bits.
     // P_i = a_i XOR b_i (propagate); G_i = a_i AND b_i (generate)
@@ -503,10 +573,9 @@ fn test_zhegalkin_exhaustive_8_variables() {
     let corner = terms.bv_binop(Op::BvAnd, v[0], v[7]).unwrap();
     expr = terms.bv_binop(Op::BvXor, not_expr, corner).unwrap();
 
-    let simplified = ZhegalkinPolynomial::simplify(expr, &mut terms, &mut sorts)
-        .unwrap_or(expr);
+    let simplified = ZhegalkinPolynomial::simplify(expr, &mut terms, &mut sorts).unwrap_or(expr);
 
-    let var_names = ["a","b","c","d","e","f","g","h"];
+    let var_names = ["a", "b", "c", "d", "e", "f", "g", "h"];
     let mut validator = ModelValidator::new();
     let mut count = 0u32;
 
@@ -517,9 +586,11 @@ fn test_zhegalkin_exhaustive_8_variables() {
             let val = (bits >> i) & 1;
             model.insert(name, smt_core::value::Value::new_bv(val.into(), 1));
         }
-        let v_orig = validator.evaluate(expr, &model, &terms, &sorts)
+        let v_orig = validator
+            .evaluate(expr, &model, &terms, &sorts)
             .expect("Original 8-var term must evaluate");
-        let v_simp = validator.evaluate(simplified, &model, &terms, &sorts)
+        let v_simp = validator
+            .evaluate(simplified, &model, &terms, &sorts)
             .expect("Zhegalkin-simplified 8-var term must evaluate");
         assert_eq!(
             v_orig, v_simp,

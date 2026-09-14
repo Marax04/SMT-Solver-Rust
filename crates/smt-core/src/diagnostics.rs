@@ -33,10 +33,7 @@ impl fmt::Display for Span {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmtError {
     /// Syntax or lexical error encountered during parsing.
-    Parse {
-        message: String,
-        span: Span,
-    },
+    Parse { message: String, span: Span },
     /// Static sort / type mismatch error.
     Type {
         expected: String,
@@ -44,31 +41,33 @@ pub enum SmtError {
         context: String,
     },
     /// Incompatible or unsupported logic feature requested.
-    UnsupportedLogic {
-        feature: String,
-    },
+    UnsupportedLogic { feature: String },
     /// Solver state error (e.g. invalid push/pop stack operation).
-    InvalidState {
-        reason: String,
-    },
+    InvalidState { reason: String },
     /// Resource limit exceeded (timeout or memory limit).
-    ResourceExhausted {
-        detail: String,
-    },
+    ResourceExhausted { detail: String },
     /// General system or IO failure.
-    Internal {
-        details: String,
-    },
+    Internal { details: String },
 }
 
 impl fmt::Display for SmtError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse { message, span } => write!(f, "Parse error at {}: {}", span, message),
-            Self::Type { expected, found, context } => {
-                write!(f, "Type mismatch in {}: expected {}, found {}", context, expected, found)
+            Self::Type {
+                expected,
+                found,
+                context,
+            } => {
+                write!(
+                    f,
+                    "Type mismatch in {}: expected {}, found {}",
+                    context, expected, found
+                )
             }
-            Self::UnsupportedLogic { feature } => write!(f, "Unsupported logic feature: {}", feature),
+            Self::UnsupportedLogic { feature } => {
+                write!(f, "Unsupported logic feature: {}", feature)
+            }
             Self::InvalidState { reason } => write!(f, "Invalid solver state: {}", reason),
             Self::ResourceExhausted { detail } => write!(f, "Resource exhausted: {}", detail),
             Self::Internal { details } => write!(f, "Internal solver error: {}", details),

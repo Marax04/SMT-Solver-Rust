@@ -382,19 +382,20 @@ impl<'a> BitBlaster<'a> {
                             let a = term.args[i];
                             let b = term.args[j];
                             let a_sort = self.arena.sort_of(a);
-                            let eq_lit = if let smt_core::sort::Sort::BitVec(_) = self.sorts.get(a_sort) {
-                                let a_bits = self.blast_bv(a, solver);
-                                let b_bits = self.blast_bv(b, solver);
-                                self.circuit_eq(&a_bits, &b_bits, solver)
-                            } else if a_sort == self.sorts.bool_sort {
-                                let a_lit = self.blast_bool(a, solver);
-                                let b_lit = self.blast_bool(b, solver);
-                                let xor = self.gate_xor(a_lit, b_lit, solver);
-                                !xor
-                            } else {
-                                let v = solver.new_var();
-                                v.to_lit()
-                            };
+                            let eq_lit =
+                                if let smt_core::sort::Sort::BitVec(_) = self.sorts.get(a_sort) {
+                                    let a_bits = self.blast_bv(a, solver);
+                                    let b_bits = self.blast_bv(b, solver);
+                                    self.circuit_eq(&a_bits, &b_bits, solver)
+                                } else if a_sort == self.sorts.bool_sort {
+                                    let a_lit = self.blast_bool(a, solver);
+                                    let b_lit = self.blast_bool(b, solver);
+                                    let xor = self.gate_xor(a_lit, b_lit, solver);
+                                    !xor
+                                } else {
+                                    let v = solver.new_var();
+                                    v.to_lit()
+                                };
                             diff_lits.push(!eq_lit);
                         }
                     }
@@ -492,15 +493,24 @@ impl<'a> BitBlaster<'a> {
     }
 
     fn gate_and_vec(&self, a: &[Lit], b: &[Lit], solver: &mut SatSolver) -> Vec<Lit> {
-        a.iter().zip(b.iter()).map(|(&x, &y)| self.gate_and(x, y, solver)).collect()
+        a.iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| self.gate_and(x, y, solver))
+            .collect()
     }
 
     fn gate_or_vec(&self, a: &[Lit], b: &[Lit], solver: &mut SatSolver) -> Vec<Lit> {
-        a.iter().zip(b.iter()).map(|(&x, &y)| self.gate_or(x, y, solver)).collect()
+        a.iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| self.gate_or(x, y, solver))
+            .collect()
     }
 
     fn gate_xor_vec(&self, a: &[Lit], b: &[Lit], solver: &mut SatSolver) -> Vec<Lit> {
-        a.iter().zip(b.iter()).map(|(&x, &y)| self.gate_xor(x, y, solver)).collect()
+        a.iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| self.gate_xor(x, y, solver))
+            .collect()
     }
 
     /// Ripple-carry adder circuit.
@@ -595,7 +605,11 @@ impl<'a> BitBlaster<'a> {
             }
             let mut next = vec![false_l; len];
             for i in 0..len {
-                let shifted_in = if i + shift < len { curr[i + shift] } else { false_l };
+                let shifted_in = if i + shift < len {
+                    curr[i + shift]
+                } else {
+                    false_l
+                };
                 next[i] = self.gate_ite(b_bit, shifted_in, curr[i], solver);
             }
             curr = next;
@@ -617,7 +631,11 @@ impl<'a> BitBlaster<'a> {
             }
             let mut next = vec![sign_bit; len];
             for i in 0..len {
-                let shifted_in = if i + shift < len { curr[i + shift] } else { sign_bit };
+                let shifted_in = if i + shift < len {
+                    curr[i + shift]
+                } else {
+                    sign_bit
+                };
                 next[i] = self.gate_ite(b_bit, shifted_in, curr[i], solver);
             }
             curr = next;
@@ -696,7 +714,12 @@ impl<'a> BitBlaster<'a> {
 
     /// Restoring binary divider producing (quotient, remainder) adhering to SMT-LIB 2.6:
     /// - If divisor == 0: quotient = all 1s (2^w - 1), remainder = dividend.
-    pub fn circuit_udiv_urem(&mut self, a: &[Lit], b: &[Lit], solver: &mut SatSolver) -> (Vec<Lit>, Vec<Lit>) {
+    pub fn circuit_udiv_urem(
+        &mut self,
+        a: &[Lit],
+        b: &[Lit],
+        solver: &mut SatSolver,
+    ) -> (Vec<Lit>, Vec<Lit>) {
         let len = a.len();
         let false_l = !self.get_true_lit(solver);
         let true_l = self.get_true_lit(solver);
@@ -711,9 +734,7 @@ impl<'a> BitBlaster<'a> {
         for i in (0..len).rev() {
             // Shift r left by 1 and insert a[i] as LSB
             let mut r_next = vec![false_l; len];
-            for j in 1..len {
-                r_next[j] = r[j - 1];
-            }
+            r_next[1..len].copy_from_slice(&r[..(len - 1)]);
             r_next[0] = a[i];
             let overflow = r[len - 1];
 
@@ -747,7 +768,7 @@ impl<'a> BitBlaster<'a> {
 
     /// Signed division adhering to SMT-LIB 2.6:
     /// - If divisor == 0:
-    ///     sdiv(s, 0) = all 1s (-1) if s >= 0, else 1
+    ///   sdiv(s, 0) = all 1s (-1) if s >= 0, else 1
     /// - sdiv(s, t) = if s_sign != t_sign then -udiv(|s|, |t|) else udiv(|s|, |t|)
     pub fn circuit_sdiv(&mut self, a: &[Lit], b: &[Lit], solver: &mut SatSolver) -> Vec<Lit> {
         let len = a.len();
@@ -792,11 +813,11 @@ impl<'a> BitBlaster<'a> {
         // if a is positive (sign_a == 0): all 1s (-1)
         let is_b_zero = self.circuit_is_zero(b, solver);
         let mut div0_res = Vec::with_capacity(len);
-        for i in 0..len {
+        for (i, &normal_bit) in normal_res.iter().enumerate().take(len) {
             let bit_if_pos = true_l;
             let bit_if_neg = if i == 0 { true_l } else { false_l };
             let bit_div0 = self.gate_ite(sign_a, bit_if_neg, bit_if_pos, solver);
-            div0_res.push(self.gate_ite(is_b_zero, bit_div0, normal_res[i], solver));
+            div0_res.push(self.gate_ite(is_b_zero, bit_div0, normal_bit, solver));
         }
 
         div0_res

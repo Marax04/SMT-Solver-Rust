@@ -151,7 +151,9 @@ impl Vsids {
             if self.activity[self.heap[left].index()] > self.activity[self.heap[best].index()] {
                 best = left;
             }
-            if right < len && self.activity[self.heap[right].index()] > self.activity[self.heap[best].index()] {
+            if right < len
+                && self.activity[self.heap[right].index()] > self.activity[self.heap[best].index()]
+            {
                 best = right;
             }
 

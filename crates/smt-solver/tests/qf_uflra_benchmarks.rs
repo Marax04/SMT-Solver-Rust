@@ -14,7 +14,9 @@ fn test_qf_uflra_shared_equality_unsat() {
         (assert (distinct (f x) (f y)))
         (check-sat)
     "#;
-    let outputs = solver.execute_script(script).expect("Script execution failed");
+    let outputs = solver
+        .execute_script(script)
+        .expect("Script execution failed");
     assert_eq!(outputs, vec!["unsat"]);
 }
 
@@ -32,6 +34,8 @@ fn test_qf_uflra_shared_variable_sat() {
         (check-sat)
         (get-model)
     "#;
-    let outputs = solver.execute_script(script).expect("Script execution failed");
+    let outputs = solver
+        .execute_script(script)
+        .expect("Script execution failed");
     assert_eq!(outputs[0], "sat");
 }

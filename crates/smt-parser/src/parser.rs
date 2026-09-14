@@ -124,7 +124,8 @@ impl<'a> Parser<'a> {
                 if arg_sorts.is_empty() {
                     self.var_env.insert(name.to_string(), ret_sort);
                 } else {
-                    self.fun_env.insert(name.to_string(), (arg_sorts.clone(), ret_sort));
+                    self.fun_env
+                        .insert(name.to_string(), (arg_sorts.clone(), ret_sort));
                 }
 
                 Ok(Command::DeclareFun(name.to_string(), arg_sorts, ret_sort))
@@ -214,11 +215,17 @@ impl<'a> Parser<'a> {
                     });
                 }
                 // (_ BitVec m)
-                if list.len() == 3 && list[0].as_symbol() == Some("_") && list[1].as_symbol() == Some("BitVec") {
-                    let width = self.expect_numeral(&list[2])?.to_u32().ok_or_else(|| SmtError::Parse {
-                        message: "Invalid bit-width".to_string(),
-                        span: list[2].span(),
-                    })?;
+                if list.len() == 3
+                    && list[0].as_symbol() == Some("_")
+                    && list[1].as_symbol() == Some("BitVec")
+                {
+                    let width =
+                        self.expect_numeral(&list[2])?
+                            .to_u32()
+                            .ok_or_else(|| SmtError::Parse {
+                                message: "Invalid bit-width".to_string(),
+                                span: list[2].span(),
+                            })?;
                     let id = self.sorts.bv(width);
                     return Ok(id);
                 }
@@ -268,12 +275,8 @@ impl<'a> Parser<'a> {
                         span: *span,
                     })
                 }
-                Token::Numeral(num) => {
-                    Ok(self.terms.int_const(num.clone(), self.sorts))
-                }
-                Token::Decimal(dec) => {
-                    Ok(self.terms.real_const(dec.clone(), self.sorts))
-                }
+                Token::Numeral(num) => Ok(self.terms.int_const(num.clone(), self.sorts)),
+                Token::Decimal(dec) => Ok(self.terms.real_const(dec.clone(), self.sorts)),
                 Token::HexLiteral { value, width } => {
                     Ok(self.terms.bv_const(value.clone(), *width, self.sorts))
                 }
@@ -296,8 +299,8 @@ impl<'a> Parser<'a> {
                 // Handle bit-vector constants: (_ bvX m)
                 if list[0].as_symbol() == Some("_") && list.len() == 3 {
                     if let Some(sym) = list[1].as_symbol() {
-                        if sym.starts_with("bv") {
-                            if let Ok(val) = sym[2..].parse::<BigUint>() {
+                        if let Some(stripped) = sym.strip_prefix("bv") {
+                            if let Ok(val) = stripped.parse::<BigUint>() {
                                 let width = self.expect_numeral(&list[2])?.to_u32().unwrap();
                                 return Ok(self.terms.bv_const(val, width, self.sorts));
                             }
@@ -324,7 +327,8 @@ impl<'a> Parser<'a> {
                             "zero_extend" => {
                                 let n = self.expect_numeral(&op_list[2])?.to_u32().unwrap();
                                 let arg = self.parse_term(&list[1])?;
-                                let zeroes = self.terms.bv_const(BigUint::from(0u32), n, self.sorts);
+                                let zeroes =
+                                    self.terms.bv_const(BigUint::from(0u32), n, self.sorts);
                                 return self.terms.bv_concat(zeroes, arg, self.sorts);
                             }
                             "sign_extend" => {
@@ -336,7 +340,11 @@ impl<'a> Parser<'a> {
                                     _ => 1,
                                 };
                                 let res_sort = self.sorts.bv(w + n);
-                                return Ok(self.terms.intern(Op::BvSignExtend(n), vec![arg], res_sort));
+                                return Ok(self.terms.intern(
+                                    Op::BvSignExtend(n),
+                                    vec![arg],
+                                    res_sort,
+                                ));
                             }
                             _ => {}
                         }
@@ -363,7 +371,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn construct_op(&mut self, op_sym: &str, args: Vec<TermId>, span: Span) -> Result<TermId, SmtError> {
+    fn construct_op(
+        &mut self,
+        op_sym: &str,
+        args: Vec<TermId>,
+        span: Span,
+    ) -> Result<TermId, SmtError> {
         match op_sym {
             "not" => Ok(self.terms.not(args[0])),
             "and" => Ok(self.terms.and(args, self.sorts)),

@@ -161,7 +161,10 @@ impl Solver {
                     let mut validator = ModelValidator::new();
                     let mut all_to_verify = self.assertions.clone();
                     all_to_verify.extend_from_slice(assumptions);
-                    if validator.validate(&all_to_verify, model, &self.terms, &self.sorts).is_err() {
+                    if validator
+                        .validate(&all_to_verify, model, &self.terms, &self.sorts)
+                        .is_err()
+                    {
                         return CheckSatResult::Unknown;
                     }
                 }
@@ -209,7 +212,13 @@ impl Solver {
                                 val |= BigUint::from(1u32) << i;
                             }
                         }
-                        model.insert(name, Value::BitVec { value: val, width: *w });
+                        model.insert(
+                            name,
+                            Value::BitVec {
+                                value: val,
+                                width: *w,
+                            },
+                        );
                     }
                     _ => {}
                 }
@@ -252,7 +261,10 @@ impl Solver {
             if matches!(sort, Sort::Int | Sort::Real) {
                 coordinator.register_shared_term(term_id);
             }
-            if matches!(term.op, Op::Eq | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Distinct) {
+            if matches!(
+                term.op,
+                Op::Eq | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Distinct
+            ) {
                 let lit = tseitin.encode(term_id, &mut sat_solver, &self.terms);
                 coordinator.register_lit_term(lit, term_id);
             }
@@ -418,7 +430,9 @@ impl Solver {
             // Build blocking clause: OR_{v in vars} (v != val(v))
             let mut diffs = Vec::with_capacity(vars_to_block.len());
             for var_name in &vars_to_block {
-                if let (Some(&(term, _)), Some(val)) = (self.var_decls.get(var_name), model.get(var_name)) {
+                if let (Some(&(term, _)), Some(val)) =
+                    (self.var_decls.get(var_name), model.get(var_name))
+                {
                     let const_term = match val {
                         Value::BitVec { value, width } => {
                             self.terms.bv_const(value.clone(), *width, &mut self.sorts)
@@ -485,18 +499,16 @@ impl Solver {
         };
 
         for name in &var_names {
-            if let Some(val) = model.get(name) {
-                if let Value::BitVec { value, width } = val {
-                    let b = value.to_bytes_be();
-                    let expected_bytes = (*width as usize + 7) / 8;
-                    if b.len() < expected_bytes {
-                        bytes.resize(bytes.len() + (expected_bytes - b.len()), 0);
-                    }
-                    bytes.extend_from_slice(&b);
-                    total_bits += *width as usize;
-                    for byte in &b {
-                        set_bits += byte.count_ones() as usize;
-                    }
+            if let Some(Value::BitVec { value, width }) = model.get(name) {
+                let b = value.to_bytes_be();
+                let expected_bytes = (*width as usize).div_ceil(8);
+                if b.len() < expected_bytes {
+                    bytes.resize(bytes.len() + (expected_bytes - b.len()), 0);
+                }
+                bytes.extend_from_slice(&b);
+                total_bits += *width as usize;
+                for byte in &b {
+                    set_bits += byte.count_ones() as usize;
                 }
             }
         }
@@ -508,7 +520,9 @@ impl Solver {
                 }
                 let printable = bytes
                     .iter()
-                    .filter(|&&b| (0x20..=0x7E).contains(&b) || b == b'\t' || b == b'\n' || b == b'\r')
+                    .filter(|&&b| {
+                        (0x20..=0x7E).contains(&b) || b == b'\t' || b == b'\n' || b == b'\r'
+                    })
                     .count();
                 printable as f64 / bytes.len() as f64
             }
@@ -546,8 +560,16 @@ impl Solver {
     /// resolve to their underlying constants before pattern matching. The folded terms are
     /// interned into the arena and therefore visible to `CryptoScanner::scan`.
     pub fn scan_crypto(&mut self) -> Vec<crate::crypto::CryptoMatch> {
-        // 1. Constant-fold every assertion — resolves obfuscated constants.
+        // 1. Normalize every assertion: algebraic rewrite followed by constant folding.
+        // This resolves MBA-obfuscated expressions (e.g. (x ^ x) + c, (c ^ k) + 2*(c & k) - k)
+        // to their underlying values before pattern matching.
         let assertion_ids: Vec<TermId> = self.assertions.clone();
+        {
+            let mut rewriter = Rewriter::new(&mut self.terms, &mut self.sorts);
+            for id in &assertion_ids {
+                rewriter.rewrite(*id);
+            }
+        }
         {
             let mut folder = ConstantFolder::new(&mut self.terms, &mut self.sorts);
             for id in &assertion_ids {

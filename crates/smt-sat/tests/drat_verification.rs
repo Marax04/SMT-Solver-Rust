@@ -14,9 +14,16 @@ fn test_drat_proof_format_and_empty_clause() {
     assert_eq!(res, smt_sat::LBool::False);
 
     let proof_str = solver.proof.to_string();
-    assert!(!proof_str.is_empty(), "DRAT proof must not be empty on UNSAT");
+    assert!(
+        !proof_str.is_empty(),
+        "DRAT proof must not be empty on UNSAT"
+    );
 
-    let lines: Vec<&str> = proof_str.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = proof_str
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
     for line in &lines {
         assert!(
             line.ends_with(" 0") || line == &"0",
@@ -99,5 +106,3 @@ d 1 2 0
         "Multi-step DRAT certificate with deletion must verify successfully"
     );
 }
-
-

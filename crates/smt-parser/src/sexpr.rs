@@ -49,7 +49,10 @@ pub fn parse_sexprs(input: &str) -> Result<Vec<SExpr>, SmtError> {
             Token::LParen => {
                 if stack.len() >= MAX_SEXPR_DEPTH {
                     return Err(SmtError::Parse {
-                        message: format!("Expression nesting depth exceeded limit ({})", MAX_SEXPR_DEPTH),
+                        message: format!(
+                            "Expression nesting depth exceeded limit ({})",
+                            MAX_SEXPR_DEPTH
+                        ),
                         span,
                     });
                 }

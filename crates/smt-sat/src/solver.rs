@@ -99,7 +99,11 @@ impl SatSolver {
             return false;
         }
 
-        assert_eq!(self.trail.decision_level(), 0, "Clauses must be added at level 0");
+        assert_eq!(
+            self.trail.decision_level(),
+            0,
+            "Clauses must be added at level 0"
+        );
 
         for &lit in &lits {
             while lit.var().index() >= self.num_vars {
@@ -321,7 +325,14 @@ impl SatSolver {
 
             match self.trail.reason_of(var) {
                 Reason::Clause(cid) => {
-                    current_lits = self.arena.get(cid).lits.iter().copied().filter(|&l| l.var() != var).collect();
+                    current_lits = self
+                        .arena
+                        .get(cid)
+                        .lits
+                        .iter()
+                        .copied()
+                        .filter(|&l| l.var() != var)
+                        .collect();
                 }
                 _ => {
                     break;
@@ -360,7 +371,9 @@ impl SatSolver {
             let ca = self.arena.get(a);
             let cb = self.arena.get(b);
             cb.lbd.cmp(&ca.lbd).then_with(|| {
-                ca.activity.partial_cmp(&cb.activity).unwrap_or(std::cmp::Ordering::Equal)
+                ca.activity
+                    .partial_cmp(&cb.activity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
         });
 
@@ -411,7 +424,11 @@ impl SatSolver {
     }
 
     /// Core CDCL(T) solving algorithm with theory callback integration.
-    pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T, assumptions: &[Lit]) -> LBool {
+    pub fn solve_with_theory<T: TheoryCallback>(
+        &mut self,
+        theory: &mut T,
+        assumptions: &[Lit],
+    ) -> LBool {
         if !self.ok {
             return LBool::False;
         }
@@ -435,7 +452,9 @@ impl SatSolver {
         let res = self.solve_internal(theory, assumptions, is_assumption_run);
 
         if res == LBool::True {
-            self.model = (0..self.num_vars).map(|v| self.trail.var_value(Var(v as u32))).collect();
+            self.model = (0..self.num_vars)
+                .map(|v| self.trail.var_value(Var(v as u32)))
+                .collect();
         } else {
             self.model.clear();
         }
@@ -504,7 +523,8 @@ impl SatSolver {
                         theory.assert_lit(learned_lits[0]);
                     } else {
                         let learned_cid = self.add_learned_clause(learned_lits.clone(), lbd);
-                        self.trail.assign(learned_lits[0], Reason::Clause(learned_cid));
+                        self.trail
+                            .assign(learned_lits[0], Reason::Clause(learned_cid));
                         theory.assert_lit(learned_lits[0]);
                     }
                     continue;
@@ -517,35 +537,33 @@ impl SatSolver {
             }
 
             // 2. Theory checking & propagation
-            match theory.check() {
-                Err(theory_conflict_lits) => {
-                    if self.trail.decision_level() == 0 {
-                        if !is_assumption_run {
-                            self.ok = false;
-                        }
-                        return LBool::False;
+            if let Err(theory_conflict_lits) = theory.check() {
+                if self.trail.decision_level() == 0 {
+                    if !is_assumption_run {
+                        self.ok = false;
                     }
-                    let cid = self.arena.alloc_learned(theory_conflict_lits, 2);
-                    let (learned_lits, backtrack_level, lbd) = self.analyze_conflict(cid);
-                    if is_assumption_run && backtrack_level < assumptions.len() as u32 {
-                        return LBool::False;
-                    }
-                    while self.trail.decision_level() > backtrack_level {
-                        self.backtrack_to(self.trail.decision_level() - 1);
-                        theory.pop();
-                    }
-
-                    if learned_lits.len() == 1 {
-                        self.trail.assign(learned_lits[0], Reason::Unit);
-                        theory.assert_lit(learned_lits[0]);
-                    } else {
-                        let learned_cid = self.add_learned_clause(learned_lits.clone(), lbd);
-                        self.trail.assign(learned_lits[0], Reason::Clause(learned_cid));
-                        theory.assert_lit(learned_lits[0]);
-                    }
-                    continue;
+                    return LBool::False;
                 }
-                Ok(()) => {}
+                let cid = self.arena.alloc_learned(theory_conflict_lits, 2);
+                let (learned_lits, backtrack_level, lbd) = self.analyze_conflict(cid);
+                if is_assumption_run && backtrack_level < assumptions.len() as u32 {
+                    return LBool::False;
+                }
+                while self.trail.decision_level() > backtrack_level {
+                    self.backtrack_to(self.trail.decision_level() - 1);
+                    theory.pop();
+                }
+
+                if learned_lits.len() == 1 {
+                    self.trail.assign(learned_lits[0], Reason::Unit);
+                    theory.assert_lit(learned_lits[0]);
+                } else {
+                    let learned_cid = self.add_learned_clause(learned_lits.clone(), lbd);
+                    self.trail
+                        .assign(learned_lits[0], Reason::Clause(learned_cid));
+                    theory.assert_lit(learned_lits[0]);
+                }
+                continue;
             }
 
             // 3. Theory-driven propagations

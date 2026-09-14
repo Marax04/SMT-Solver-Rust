@@ -70,9 +70,13 @@ fn main() -> ExitCode {
             "--score" => {
                 if i + 1 < args.len() {
                     match args[i + 1].to_lowercase().as_str() {
-                        "ascii" => score_heuristic = Some(smt_solver::ScoreHeuristic::AsciiPrintable),
+                        "ascii" => {
+                            score_heuristic = Some(smt_solver::ScoreHeuristic::AsciiPrintable)
+                        }
                         "entropy" => score_heuristic = Some(smt_solver::ScoreHeuristic::Entropy),
-                        "weight" => score_heuristic = Some(smt_solver::ScoreHeuristic::LowHammingWeight),
+                        "weight" => {
+                            score_heuristic = Some(smt_solver::ScoreHeuristic::LowHammingWeight)
+                        }
                         other => {
                             eprintln!("Error: Unknown scoring heuristic '{}'. Choose 'ascii', 'entropy', or 'weight'", other);
                             return ExitCode::FAILURE;
@@ -322,7 +326,11 @@ fn main() -> ExitCode {
             );
             println!("[NOTE] Heuristic ranking applied for analyst triage: highest score denotes most plausible candidate, NOT proof of uniqueness.");
             for (idx, (m, score)) in scored.iter().enumerate() {
-                println!("--- Candidate Model #{} [Heuristic Score: {:.4}] ---", idx + 1, score);
+                println!(
+                    "--- Candidate Model #{} [Heuristic Score: {:.4}] ---",
+                    idx + 1,
+                    score
+                );
                 print!("{}", m);
             }
             if scored.len() == 1 {
@@ -330,7 +338,10 @@ fn main() -> ExitCode {
             } else if scored.is_empty() {
                 println!("Key certification: 0 solutions discovered (UNSAT).");
             } else {
-                println!("Key certification: Multiple solutions ({}) exist.", scored.len());
+                println!(
+                    "Key certification: Multiple solutions ({}) exist.",
+                    scored.len()
+                );
             }
         } else {
             let models = solver.enumerate_models(&[], limit);
@@ -344,7 +355,10 @@ fn main() -> ExitCode {
             } else if models.is_empty() {
                 println!("Key certification: 0 solutions discovered (UNSAT).");
             } else {
-                println!("Key certification: Multiple solutions ({}) exist.", models.len());
+                println!(
+                    "Key certification: Multiple solutions ({}) exist.",
+                    models.len()
+                );
             }
         }
         return ExitCode::SUCCESS;

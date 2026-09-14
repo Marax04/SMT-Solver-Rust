@@ -11,7 +11,9 @@ fn test_crypto_fingerprint_aes_sbox() {
     // Insert 12 distinct AES S-box constants
     let mut terms_to_assert = Vec::new();
     for &b in &AES_SBOX[..12] {
-        let c = solver.terms.bv_const((b as u32).into(), 8, &mut solver.sorts);
+        let c = solver
+            .terms
+            .bv_const((b as u32).into(), 8, &mut solver.sorts);
         let var = solver.declare_const(&format!("sbox_const_{:02x}", b), bv8);
         let eq = solver.terms.eq(var, c, &solver.sorts);
         terms_to_assert.push(eq);
@@ -23,7 +25,10 @@ fn test_crypto_fingerprint_aes_sbox() {
     let aes_match = matches
         .iter()
         .find(|m| m.algorithm == CryptoAlgorithm::AesForwardSbox);
-    assert!(aes_match.is_some(), "Should detect AES forward S-box from constants");
+    assert!(
+        aes_match.is_some(),
+        "Should detect AES forward S-box from constants"
+    );
     let aes = aes_match.unwrap();
     assert!(aes.confidence > 0.0);
     assert!(aes.matched_terms.len() >= 12);
@@ -63,7 +68,9 @@ fn test_crypto_fingerprint_rc4_ksa() {
     for i in 0..10u32 {
         let idx = solver.terms.bv_const(i.into(), 8, &mut solver.sorts);
         let val = solver.terms.bv_const(i.into(), 8, &mut solver.sorts);
-        curr_arr = solver.terms.intern(Op::Store, vec![curr_arr, idx, val], arr_sort);
+        curr_arr = solver
+            .terms
+            .intern(Op::Store, vec![curr_arr, idx, val], arr_sort);
     }
     let s_final = solver.declare_const("S_final", arr_sort);
     let eq = solver.terms.eq(s_final, curr_arr, &solver.sorts);
@@ -73,7 +80,10 @@ fn test_crypto_fingerprint_rc4_ksa() {
     let rc4_match = matches
         .iter()
         .find(|m| m.algorithm == CryptoAlgorithm::Rc4KsaPattern);
-    assert!(rc4_match.is_some(), "Should detect RC4 KSA identity store pattern");
+    assert!(
+        rc4_match.is_some(),
+        "Should detect RC4 KSA identity store pattern"
+    );
 }
 
 #[test]
@@ -91,12 +101,16 @@ fn test_crypto_structural_arx_round_detection() {
     let a1 = solver.terms.bv_binop(Op::BvAdd, a0, b0).unwrap();
     // d1 = (d0 ^ a1) <<< 16
     let d0_xor_a1 = solver.terms.bv_binop(Op::BvXor, d0, a1).unwrap();
-    let r16 = solver.terms.intern(Op::BvRotateLeft(16), vec![d0_xor_a1], bv32);
+    let r16 = solver
+        .terms
+        .intern(Op::BvRotateLeft(16), vec![d0_xor_a1], bv32);
 
     // Quarter-round step 2: (a1 ^ r16) <<< 12
     let next_xor = solver.terms.bv_binop(Op::BvXor, a1, r16).unwrap();
     let next_add = solver.terms.bv_binop(Op::BvAdd, next_xor, b0).unwrap();
-    let r12 = solver.terms.intern(Op::BvRotateLeft(12), vec![next_add], bv32);
+    let r12 = solver
+        .terms
+        .intern(Op::BvRotateLeft(12), vec![next_add], bv32);
 
     let final_var = solver.declare_const("res", bv32);
     let eq = solver.terms.eq(final_var, r12, &solver.sorts);
@@ -144,45 +158,69 @@ fn test_crypto_structural_aes_xtime_spn_detection() {
 fn test_crypto_pipeline_normalize_then_scan_mba_hidden_constants() {
     // Validates the normalize-then-scan pipeline ordering in scan_crypto().
     //
-    // An MBA-obfuscated assertion hides AES S-Box constants behind a zero-identity:
-    //   assert(var == (sbox_val XOR 0) )  -- the XOR-0 masks the literal sbox_val
-    //   In raw AST form, the constant 0x63 (first AES S-Box byte) is embedded inside
-    //   a BvXor node, not directly as a BvConst.
+    // Unlike a trivial (x XOR 0) identity, this test disguises AES S-Box constants
+    // behind a genuine non-trivial Linear MBA (Mixed Boolean-Arithmetic) identity:
+    //   For any bytes c and k:
+    //     c + k = (c XOR k) + 2*(c AND k)
+    //     => c = ((c XOR k) + 2*(c AND k)) - k
     //
-    // Before the pipeline fix: scan_crypto() would scan the raw arena and miss the
-    //   value because it's wrapped in BvXor(const, zero) — only the BvConst nodes
-    //   are indexed, and the wrapping expression is not folded away.
+    // In raw AST form:
+    //   - Node 1: BvXor(c, k)
+    //   - Node 2: BvAnd(c, k)
+    //   - Node 3: BvMul(Node 2, 2)
+    //   - Node 4: BvAdd(Node 1, Node 3)
+    //   - Node 5: BvSub(Node 4, k)
     //
-    // After the fix: ConstantFolder is applied first, folding (val XOR 0) -> val,
-    //   exposing the AES S-Box constants to the pattern matcher.
+    // In this AST, the literal `c` is deeply entangled with `k` across bitwise XOR, AND,
+    // multiplication by 2, and subtraction. The literal S-box byte `c` does NOT appear
+    // in isolation anywhere in the assertion tree.
+    //
+    // Before normalization: CryptoScanner::scan() traverses the raw arena and misses
+    // the S-Box table constants because they are submerged in the MBA arithmetic.
+    //
+    // After normalization: The pipeline normalizer (Rewriter + ConstantFolder)
+    // evaluates the MBA identity, reducing Node 5 to the concrete S-Box byte `c`.
+    // The enriched arena reveals the full AES S-Box fingerprint.
     use smt_solver::crypto::CryptoAlgorithm;
     let mut solver = Solver::new();
     let bv8 = solver.sorts.bv(8);
     solver.set_logic("QF_BV");
 
-    // Insert 10 AES S-Box bytes, each wrapped in an identity: (sbox_val XOR 0)
-    // The XOR-0 is a constant-foldable identity but hides the literal in the raw AST.
-    let zero8 = solver.terms.bv_const(0u32.into(), 8, &mut solver.sorts);
+    let two8 = solver.terms.bv_const(2u32.into(), 8, &mut solver.sorts);
+    let mask_k = solver.terms.bv_const(0x5Au32.into(), 8, &mut solver.sorts);
+
     for (i, &b) in AES_SBOX.iter().take(10).enumerate() {
-        let sbox_const = solver.terms.bv_const((b as u32).into(), 8, &mut solver.sorts);
-        // Wrap: sbox_val XOR 0  (foldable identity, hides the constant)
-        let disguised = solver.terms.bv_binop(Op::BvXor, sbox_const, zero8).unwrap();
-        let var = solver.declare_const(&format!("hidden_{:02x}_{}", b, i), bv8);
+        let sbox_const = solver
+            .terms
+            .bv_const((b as u32).into(), 8, &mut solver.sorts);
+
+        // Linear MBA identity: ((b ^ k) + 2*(b & k)) - k == b
+        let xor_part = solver
+            .terms
+            .bv_binop(Op::BvXor, sbox_const, mask_k)
+            .unwrap();
+        let and_part = solver
+            .terms
+            .bv_binop(Op::BvAnd, sbox_const, mask_k)
+            .unwrap();
+        let two_and = solver.terms.bv_binop(Op::BvMul, and_part, two8).unwrap();
+        let sum_part = solver.terms.bv_binop(Op::BvAdd, xor_part, two_and).unwrap();
+        let disguised = solver.terms.bv_binop(Op::BvSub, sum_part, mask_k).unwrap();
+
+        let var = solver.declare_const(&format!("hidden_mba_{:02x}_{}", b, i), bv8);
         let eq = solver.terms.eq(var, disguised, &solver.sorts);
         solver.assert_formula(eq);
     }
 
-    // scan_crypto() must now normalize (fold constants) before scanning.
-    // After normalization: (sbox_val XOR 0) folds to sbox_val, and the scanner
-    // finds the AES S-Box constants.
     let matches = solver.scan_crypto();
     let aes_match = matches
         .iter()
         .find(|m| m.algorithm == CryptoAlgorithm::AesForwardSbox);
     assert!(
         aes_match.is_some(),
-        "Pipeline fix (normalize-then-scan): AES S-Box constants wrapped in XOR-0 \
-         must be detectable AFTER constant folding. Without the fix, this would return None."
+        "Pipeline fix (normalize-then-scan): AES S-Box constants disguised via \
+         non-trivial MBA identity ((c ^ k) + 2*(c & k)) - k must be exposed AFTER \
+         normalization. Without normalization, this returns None."
     );
     let aes = aes_match.unwrap();
     assert!(

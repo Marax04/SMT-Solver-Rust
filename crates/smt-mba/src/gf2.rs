@@ -24,7 +24,7 @@ pub struct Gf2Matrix {
 impl Gf2Matrix {
     /// Creates a new zero-initialized GF(2) matrix.
     pub fn new(rows: usize, cols: usize) -> Self {
-        let words_per_row = (cols + 63) / 64;
+        let words_per_row = cols.div_ceil(64);
         Self {
             rows,
             cols,
@@ -112,11 +112,11 @@ impl Gf2Matrix {
         assert_eq!(a.rows, b.len());
         // Augmented matrix [A | b]
         let mut aug = Gf2Matrix::new(a.rows, a.cols + 1);
-        for r in 0..a.rows {
+        for (r, &b_val) in b.iter().enumerate().take(a.rows) {
             for c in 0..a.cols {
                 aug.set(r, c, a.get(r, c));
             }
-            aug.set(r, a.cols, b[r]);
+            aug.set(r, a.cols, b_val);
         }
 
         aug.rref();
@@ -138,9 +138,9 @@ impl Gf2Matrix {
         // Back-substitute / read off solution
         let mut sol = vec![false; a.cols];
         for r in 0..aug.rows {
-            for c in 0..a.cols {
+            for (c, item) in sol.iter_mut().enumerate().take(a.cols) {
                 if aug.get(r, c) {
-                    sol[c] = aug.get(r, a.cols);
+                    *item = aug.get(r, a.cols);
                     break;
                 }
             }
@@ -237,7 +237,9 @@ impl Gf2LinearMbaSimplifier {
                     model.insert(name, Value::new_bv(pt[v_idx].into(), 32));
                 }
                 let mut validator = ModelValidator::new();
-                if let Ok(Value::BitVec { value, .. }) = validator.evaluate(cand, &model, terms, sorts) {
+                if let Ok(Value::BitVec { value, .. }) =
+                    validator.evaluate(cand, &model, terms, sorts)
+                {
                     if value != target_vals[pt_idx] {
                         matches = false;
                         break;

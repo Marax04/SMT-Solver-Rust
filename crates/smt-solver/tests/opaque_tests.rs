@@ -80,21 +80,30 @@ fn test_opaque_contextual_implied() {
 
     // Path condition: x > 10
     let ten = solver.terms.bv_const(10u32.into(), 32, &mut solver.sorts);
-    let pc_x_gt_10 = solver.terms.intern(Op::BvUgt, vec![x, ten], solver.sorts.bool_sort);
+    let pc_x_gt_10 = solver
+        .terms
+        .intern(Op::BvUgt, vec![x, ten], solver.sorts.bool_sort);
 
     // Predicate: x > 5
     let five = solver.terms.bv_const(5u32.into(), 32, &mut solver.sorts);
-    let pred_x_gt_5 = solver.terms.intern(Op::BvUgt, vec![x, five], solver.sorts.bool_sort);
+    let pred_x_gt_5 = solver
+        .terms
+        .intern(Op::BvUgt, vec![x, five], solver.sorts.bool_sort);
 
     // 1. In isolation, x > 5 is Dynamic (can be true or false)
-    assert_eq!(solver.check_opaque(pred_x_gt_5), OpaqueClassification::Dynamic);
+    assert_eq!(
+        solver.check_opaque(pred_x_gt_5),
+        OpaqueClassification::Dynamic
+    );
 
     // 2. Under the context (x > 10), x > 5 is an Opaque Invariant (AlwaysTrue)
     let context_class = solver.check_opaque_contextual(&[pc_x_gt_10], pred_x_gt_5);
     assert_eq!(context_class, OpaqueClassification::AlwaysTrue);
 
     // 3. Negated predicate: x < 5 under (x > 10) is AlwaysFalse
-    let pred_x_lt_5 = solver.terms.intern(Op::BvUlt, vec![x, five], solver.sorts.bool_sort);
+    let pred_x_lt_5 = solver
+        .terms
+        .intern(Op::BvUlt, vec![x, five], solver.sorts.bool_sort);
     let context_false = solver.check_opaque_contextual(&[pc_x_gt_10], pred_x_lt_5);
     assert_eq!(context_false, OpaqueClassification::AlwaysFalse);
 }
@@ -109,8 +118,12 @@ fn test_path_condition_folding_trace() {
     let ten = solver.terms.bv_const(10u32.into(), 32, &mut solver.sorts);
     let five = solver.terms.bv_const(5u32.into(), 32, &mut solver.sorts);
 
-    let pred_gt_10 = solver.terms.intern(Op::BvUgt, vec![x, ten], solver.sorts.bool_sort);
-    let pred_gt_5 = solver.terms.intern(Op::BvUgt, vec![x, five], solver.sorts.bool_sort);
+    let pred_gt_10 = solver
+        .terms
+        .intern(Op::BvUgt, vec![x, ten], solver.sorts.bool_sort);
+    let pred_gt_5 = solver
+        .terms
+        .intern(Op::BvUgt, vec![x, five], solver.sorts.bool_sort);
 
     // Trace: Block 100 branches on x > 10 (taken)
     //        Block 101 branches on x > 5 (contextually opaque!)
@@ -130,6 +143,9 @@ fn test_path_condition_folding_trace() {
     let result = solver.fold_trace(&trace);
     assert_eq!(result.reachable_blocks, vec![100, 101]);
     assert_eq!(result.classifications[0].1, OpaqueClassification::Dynamic);
-    assert_eq!(result.classifications[1].1, OpaqueClassification::AlwaysTrue);
+    assert_eq!(
+        result.classifications[1].1,
+        OpaqueClassification::AlwaysTrue
+    );
     assert!(result.eliminated_dead_edges.contains(&(101, false)));
 }

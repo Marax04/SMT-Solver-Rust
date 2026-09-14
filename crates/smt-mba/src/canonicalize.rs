@@ -1,4 +1,4 @@
-﻿//! Canonicalization and algebraic normalization for bitwise/arithmetic expressions.
+//! Canonicalization and algebraic normalization for bitwise/arithmetic expressions.
 
 use smt_core::sort::SortArena;
 use smt_core::term::{Op, TermArena, TermId};
@@ -16,10 +16,8 @@ impl MbaCanonicalizer {
         }
 
         // Commutative sorting
-        if is_commutative(&term.op) && new_args.len() == 2 {
-            if new_args[0].0 > new_args[1].0 {
-                new_args.swap(0, 1);
-            }
+        if is_commutative(&term.op) && new_args.len() == 2 && new_args[0].0 > new_args[1].0 {
+            new_args.swap(0, 1);
         }
 
         match &term.op {
@@ -32,14 +30,30 @@ impl MbaCanonicalizer {
                 }
                 // De Morgan: ~(a & b) => ~a | ~b
                 if inner_term.op == Op::BvAnd && inner_term.args.len() == 2 {
-                    let not_a = Self::normalize(terms.intern(Op::BvNot, vec![inner_term.args[0]], term.sort), terms, sorts);
-                    let not_b = Self::normalize(terms.intern(Op::BvNot, vec![inner_term.args[1]], term.sort), terms, sorts);
+                    let not_a = Self::normalize(
+                        terms.intern(Op::BvNot, vec![inner_term.args[0]], term.sort),
+                        terms,
+                        sorts,
+                    );
+                    let not_b = Self::normalize(
+                        terms.intern(Op::BvNot, vec![inner_term.args[1]], term.sort),
+                        terms,
+                        sorts,
+                    );
                     return terms.intern(Op::BvOr, vec![not_a, not_b], term.sort);
                 }
                 // De Morgan: ~(a | b) => ~a & ~b
                 if inner_term.op == Op::BvOr && inner_term.args.len() == 2 {
-                    let not_a = Self::normalize(terms.intern(Op::BvNot, vec![inner_term.args[0]], term.sort), terms, sorts);
-                    let not_b = Self::normalize(terms.intern(Op::BvNot, vec![inner_term.args[1]], term.sort), terms, sorts);
+                    let not_a = Self::normalize(
+                        terms.intern(Op::BvNot, vec![inner_term.args[0]], term.sort),
+                        terms,
+                        sorts,
+                    );
+                    let not_b = Self::normalize(
+                        terms.intern(Op::BvNot, vec![inner_term.args[1]], term.sort),
+                        terms,
+                        sorts,
+                    );
                     return terms.intern(Op::BvAnd, vec![not_a, not_b], term.sort);
                 }
             }
@@ -71,17 +85,13 @@ impl MbaCanonicalizer {
                     return terms.bv_const(0u32.into(), width, sorts);
                 }
             }
-            Op::BvAnd => {
-                if new_args.len() == 2 && new_args[0] == new_args[1] {
-                    // a & a => a
-                    return new_args[0];
-                }
+            Op::BvAnd if new_args.len() == 2 && new_args[0] == new_args[1] => {
+                // a & a => a
+                return new_args[0];
             }
-            Op::BvOr => {
-                if new_args.len() == 2 && new_args[0] == new_args[1] {
-                    // a | a => a
-                    return new_args[0];
-                }
+            Op::BvOr if new_args.len() == 2 && new_args[0] == new_args[1] => {
+                // a | a => a
+                return new_args[0];
             }
             _ => {}
         }
@@ -93,6 +103,14 @@ impl MbaCanonicalizer {
 fn is_commutative(op: &Op) -> bool {
     matches!(
         op,
-        Op::And | Op::Or | Op::Xor | Op::BvAnd | Op::BvOr | Op::BvXor | Op::BvAdd | Op::BvMul | Op::Eq
+        Op::And
+            | Op::Or
+            | Op::Xor
+            | Op::BvAnd
+            | Op::BvOr
+            | Op::BvXor
+            | Op::BvAdd
+            | Op::BvMul
+            | Op::Eq
     )
 }

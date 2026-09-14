@@ -303,7 +303,13 @@ impl TermArena {
     }
 
     /// Bit-Vector extraction: `((_ extract high low) term)`.
-    pub fn bv_extract(&mut self, high: u32, low: u32, arg: TermId, sorts: &mut SortArena) -> SmtResult<TermId> {
+    pub fn bv_extract(
+        &mut self,
+        high: u32,
+        low: u32,
+        arg: TermId,
+        sorts: &mut SortArena,
+    ) -> SmtResult<TermId> {
         let sort = self.sort_of(arg);
         match sorts.get(sort) {
             Sort::BitVec(w) => {
@@ -332,19 +338,23 @@ impl TermArena {
         let sort_b = self.sort_of(b);
         let w_a = match sorts.get(sort_a) {
             Sort::BitVec(w) => *w,
-            _ => return Err(SmtError::Type {
-                expected: "BitVec".to_string(),
-                found: format!("{:?}", sorts.get(sort_a)),
-                context: "concat left arg".to_string(),
-            }),
+            _ => {
+                return Err(SmtError::Type {
+                    expected: "BitVec".to_string(),
+                    found: format!("{:?}", sorts.get(sort_a)),
+                    context: "concat left arg".to_string(),
+                })
+            }
         };
         let w_b = match sorts.get(sort_b) {
             Sort::BitVec(w) => *w,
-            _ => return Err(SmtError::Type {
-                expected: "BitVec".to_string(),
-                found: format!("{:?}", sorts.get(sort_b)),
-                context: "concat right arg".to_string(),
-            }),
+            _ => {
+                return Err(SmtError::Type {
+                    expected: "BitVec".to_string(),
+                    found: format!("{:?}", sorts.get(sort_b)),
+                    context: "concat right arg".to_string(),
+                })
+            }
         };
         let res_sort = sorts.bv(w_a + w_b);
         Ok(self.intern(Op::BvConcat, vec![a, b], res_sort))
@@ -384,7 +394,13 @@ impl TermArena {
     }
 
     /// Array store: `(store arr idx val)`.
-    pub fn store(&mut self, arr: TermId, idx: TermId, val: TermId, sorts: &SortArena) -> SmtResult<TermId> {
+    pub fn store(
+        &mut self,
+        arr: TermId,
+        idx: TermId,
+        val: TermId,
+        sorts: &SortArena,
+    ) -> SmtResult<TermId> {
         let arr_sort = self.sort_of(arr);
         match sorts.get(arr_sort) {
             Sort::Array { index, element } => {
@@ -415,7 +431,12 @@ impl TermArena {
     }
 
     /// Uninterpreted function application: `(apply fname args...)`.
-    pub fn apply(&mut self, name: impl Into<String>, args: Vec<TermId>, return_sort: SortId) -> TermId {
+    pub fn apply(
+        &mut self,
+        name: impl Into<String>,
+        args: Vec<TermId>,
+        return_sort: SortId,
+    ) -> TermId {
         self.intern(Op::Apply(name.into()), args, return_sort)
     }
 
@@ -428,7 +449,7 @@ impl TermArena {
                 Op::False => "false".to_string(),
                 Op::Var(v) => v.clone(),
                 Op::BvConst { value, width } => {
-                    let hex_len = ((width + 3) / 4) as usize;
+                    let hex_len = width.div_ceil(4) as usize;
                     format!("#x{:0>width$x}", value, width = hex_len)
                 }
                 Op::IntConst(i) => {
@@ -449,7 +470,8 @@ impl TermArena {
                 _ => format!("{:?}", term.op),
             }
         } else {
-            let rendered_args: Vec<String> = term.args.iter().map(|&a| self.display_term(a)).collect();
+            let rendered_args: Vec<String> =
+                term.args.iter().map(|&a| self.display_term(a)).collect();
             let op_str = match &term.op {
                 Op::Not => "not".to_string(),
                 Op::And => "and".to_string(),

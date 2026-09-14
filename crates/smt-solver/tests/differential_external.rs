@@ -15,7 +15,11 @@ fn run_external_smt(solver_bin: &str, smt_script: &str) -> Option<String> {
     }
 
     let temp_dir = std::env::temp_dir();
-    let file_path = temp_dir.join(format!("diff_test_{}_{}.smt2", solver_bin, std::process::id()));
+    let file_path = temp_dir.join(format!(
+        "diff_test_{}_{}.smt2",
+        solver_bin,
+        std::process::id()
+    ));
     if std::fs::write(&file_path, smt_script).is_err() {
         return None;
     }
@@ -35,7 +39,9 @@ fn run_external_smt(solver_bin: &str, smt_script: &str) -> Option<String> {
     };
 
     let _ = std::fs::remove_file(&file_path);
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_lowercase();
     if stdout.contains("sat") && !stdout.contains("unsat") {
         Some("sat".to_string())
     } else if stdout.contains("unsat") {
@@ -60,7 +66,9 @@ fn check_external_differential(test_name: &str, script: &str, expected_fallback:
         let elapsed = t_start.elapsed();
         println!(
             "[DIFFERENTIAL: {}] Z3 mode | {} formula(s) | {:.2}ms",
-            test_name, formula_count, elapsed.as_secs_f64() * 1000.0
+            test_name,
+            formula_count,
+            elapsed.as_secs_f64() * 1000.0
         );
         assert_eq!(
             our_res, z3_res,
@@ -71,7 +79,9 @@ fn check_external_differential(test_name: &str, script: &str, expected_fallback:
         let elapsed = t_start.elapsed();
         println!(
             "[DIFFERENTIAL: {}] cvc5 mode | {} formula(s) | {:.2}ms",
-            test_name, formula_count, elapsed.as_secs_f64() * 1000.0
+            test_name,
+            formula_count,
+            elapsed.as_secs_f64() * 1000.0
         );
         assert_eq!(
             our_res, cvc5_res,
@@ -106,7 +116,9 @@ fn check_external_differential(test_name: &str, script: &str, expected_fallback:
         println!(
             "[DIFFERENTIAL: {}] Notice: External solvers absent in PATH — \
              self-consistency validation only | {} formula(s) | {:.2}ms",
-            test_name, formula_count, elapsed.as_secs_f64() * 1000.0
+            test_name,
+            formula_count,
+            elapsed.as_secs_f64() * 1000.0
         );
         assert_eq!(our_res, expected_fallback);
     }
@@ -133,7 +145,11 @@ fn test_differential_smt_qf_bv_unsat_contradiction() {
 (assert (= (bvadd x (_ bv1 16)) x))
 (check-sat)
 "#;
-    check_external_differential("test_differential_smt_qf_bv_unsat_contradiction", script, "unsat");
+    check_external_differential(
+        "test_differential_smt_qf_bv_unsat_contradiction",
+        script,
+        "unsat",
+    );
 }
 
 #[test]
@@ -162,4 +178,3 @@ fn test_differential_smt_qf_lra_feasibility() {
 "#;
     check_external_differential("test_differential_smt_qf_lra_feasibility", script, "unsat");
 }
-

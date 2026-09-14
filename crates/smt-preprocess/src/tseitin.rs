@@ -69,7 +69,11 @@ impl TseitinEncoder {
             Op::And => {
                 let v = solver.new_var();
                 let p = v.to_lit();
-                let arg_lits: Vec<Lit> = term.args.iter().map(|&a| self.encode(a, solver, arena)).collect();
+                let arg_lits: Vec<Lit> = term
+                    .args
+                    .iter()
+                    .map(|&a| self.encode(a, solver, arena))
+                    .collect();
 
                 // p => a_i  ==>  (!p or a_i)
                 for &a in &arg_lits {
@@ -85,7 +89,11 @@ impl TseitinEncoder {
             Op::Or => {
                 let v = solver.new_var();
                 let p = v.to_lit();
-                let arg_lits: Vec<Lit> = term.args.iter().map(|&a| self.encode(a, solver, arena)).collect();
+                let arg_lits: Vec<Lit> = term
+                    .args
+                    .iter()
+                    .map(|&a| self.encode(a, solver, arena))
+                    .collect();
 
                 // a_i => p  ==>  (!a_i or p)
                 for &a in &arg_lits {

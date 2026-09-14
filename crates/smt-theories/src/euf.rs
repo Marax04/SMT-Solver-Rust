@@ -1,4 +1,4 @@
-﻿//! Centralized Equality Engine & Congruence Closure for EUF.
+//! Centralized Equality Engine & Congruence Closure for EUF.
 
 use crate::theory::Theory;
 use smt_core::term::{Op, TermArena, TermId};
@@ -161,7 +161,10 @@ impl<'a> EufSolver<'a> {
         }
 
         // Merge use-list of child into parent
-        self.use_list.entry(parent_node).or_default().extend(child_uses);
+        self.use_list
+            .entry(parent_node)
+            .or_default()
+            .extend(child_uses);
 
         // Recursively merge induced congruences
         for (f1, f2) in induced_merges {
@@ -203,8 +206,8 @@ impl<'a> EufSolver<'a> {
             }
             if let Some(neighbors) = self.proof_adj.get(&curr) {
                 for &(next, reason) in neighbors {
-                    if !visited.contains_key(&next) {
-                        visited.insert(next, Some((curr, reason)));
+                    if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next) {
+                        e.insert(Some((curr, reason)));
                         queue.push_back(next);
                     }
                 }
@@ -222,7 +225,12 @@ impl<'a> EufSolver<'a> {
                 if let (Op::Apply(f1), Op::Apply(f2)) = (&term_curr.op, &term_prev.op) {
                     if f1 == f2 && term_curr.args.len() == term_prev.args.len() {
                         for i in 0..term_curr.args.len() {
-                            self.explain_rec(term_curr.args[i], term_prev.args[i], conflict, visited_pairs);
+                            self.explain_rec(
+                                term_curr.args[i],
+                                term_prev.args[i],
+                                conflict,
+                                visited_pairs,
+                            );
                         }
                     }
                 }
@@ -285,7 +293,11 @@ impl<'a> Theory for EufSolver<'a> {
         if let Some(target_len) = self.scopes.pop() {
             while self.undo_trail.len() > target_len {
                 match self.undo_trail.pop().unwrap() {
-                    UndoAction::Link { child, old_parent, old_rank } => {
+                    UndoAction::Link {
+                        child,
+                        old_parent,
+                        old_rank,
+                    } => {
                         self.parent.insert(child, old_parent);
                         if let Some(&p) = self.parent.get(&child) {
                             self.rank.insert(p, old_rank);

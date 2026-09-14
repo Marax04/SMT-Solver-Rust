@@ -25,10 +25,7 @@ pub enum Sort {
     /// Real numbers (exact rationals).
     Real,
     /// Extensional arrays mapping index sort to element sort.
-    Array {
-        index: SortId,
-        element: SortId,
-    },
+    Array { index: SortId, element: SortId },
     /// Custom uninterpreted sort symbol.
     Uninterpreted(String),
 }
@@ -94,7 +91,10 @@ impl SortArena {
 
     /// Interns a bitvector sort with the given width, capped at `MAX_BV_WIDTH`.
     pub fn bv(&mut self, width: u32) -> SortId {
-        assert!(width > 0 && width <= MAX_BV_WIDTH, "BitVector width must be in 1..=65536");
+        assert!(
+            width > 0 && width <= MAX_BV_WIDTH,
+            "BitVector width must be in 1..=65536"
+        );
         self.intern(Sort::BitVec(width))
     }
 
@@ -118,6 +118,11 @@ impl SortArena {
         self.sorts.len()
     }
 
+    /// Returns true if no sorts have been allocated.
+    pub fn is_empty(&self) -> bool {
+        self.sorts.is_empty()
+    }
+
     /// Formats a sort recursively by resolving internal SortIds to human-readable strings.
     pub fn display_sort(&self, id: SortId) -> String {
         match self.get(id) {
@@ -126,7 +131,11 @@ impl SortArena {
             Sort::Int => "Int".to_string(),
             Sort::Real => "Real".to_string(),
             Sort::Array { index, element } => {
-                format!("(Array {} {})", self.display_sort(*index), self.display_sort(*element))
+                format!(
+                    "(Array {} {})",
+                    self.display_sort(*index),
+                    self.display_sort(*element)
+                )
             }
             Sort::Uninterpreted(s) => s.clone(),
         }

@@ -11,10 +11,7 @@ pub enum Value {
     /// Boolean constant.
     Bool(bool),
     /// Bit-vector constant with fixed width.
-    BitVec {
-        value: BigUint,
-        width: u32,
-    },
+    BitVec { value: BigUint, width: u32 },
     /// Arbitrary-precision integer.
     Int(BigInt),
     /// Exact rational number.
@@ -25,10 +22,7 @@ pub enum Value {
         entries: Vec<(Value, Value)>,
     },
     /// An uninterpreted domain element.
-    Uninterpreted {
-        sort: SortId,
-        id: u32,
-    },
+    Uninterpreted { sort: SortId, id: u32 },
 }
 
 impl fmt::Display for Value {
@@ -37,7 +31,7 @@ impl fmt::Display for Value {
             Self::Bool(b) => write!(f, "{}", b),
             Self::BitVec { value, width } => {
                 let s = format!("{:x}", value);
-                let hex_len = ((width + 3) / 4) as usize;
+                let hex_len = width.div_ceil(4) as usize;
                 let padded = format!("{:0>width$}", s, width = hex_len);
                 write!(f, "#x{}", padded)
             }

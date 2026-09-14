@@ -135,7 +135,11 @@ impl DratChecker {
                     let var = lit.var();
                     match assignments.get(&var) {
                         Some(&assigned_val) => {
-                            let lit_val = if lit.is_pos() { assigned_val } else { !assigned_val };
+                            let lit_val = if lit.is_pos() {
+                                assigned_val
+                            } else {
+                                !assigned_val
+                            };
                             if lit_val {
                                 satisfied = true;
                                 break;

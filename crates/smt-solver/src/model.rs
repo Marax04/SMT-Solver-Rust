@@ -48,11 +48,14 @@ impl fmt::Display for Model {
                     writeln!(f, "  (define-fun {} () Bool {})", name, b)?;
                 }
                 Value::BitVec { value, width } => {
-                    let hex_len = ((width + 3) / 4) as usize;
+                    let hex_len = width.div_ceil(4) as usize;
                     writeln!(
                         f,
                         "  (define-fun {} () (_ BitVec {}) #x{:0>width$x})",
-                        name, width, value, width = hex_len
+                        name,
+                        width,
+                        value,
+                        width = hex_len
                     )?;
                 }
                 Value::Int(i) => {
@@ -66,7 +69,13 @@ impl fmt::Display for Model {
                     if r.is_integer() {
                         writeln!(f, "  (define-fun {} () Real {}.0)", name, r.to_integer())?;
                     } else {
-                        writeln!(f, "  (define-fun {} () Real (/ {} {}))", name, r.numer(), r.denom())?;
+                        writeln!(
+                            f,
+                            "  (define-fun {} () Real (/ {} {}))",
+                            name,
+                            r.numer(),
+                            r.denom()
+                        )?;
                     }
                 }
                 _ => {
