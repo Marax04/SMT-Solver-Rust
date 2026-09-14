@@ -3,7 +3,7 @@ use std::process::Command;
 
 /// Attempts to invoke an external SMT solver (z3 or cvc5) on an SMT-LIB2 script.
 /// Returns Some(result) if the external tool is installed, or None if unavailable.
-fn run_external_smt(solver_bin: &str, smt_script: &str) -> Option<String> {
+fn run_external_smt(solver_bin: &str, test_name: &str, smt_script: &str) -> Option<String> {
     // Check if the binary is callable
     let version_arg = if solver_bin == "z3" {
         "--version"
@@ -14,11 +14,15 @@ fn run_external_smt(solver_bin: &str, smt_script: &str) -> Option<String> {
         return None;
     }
 
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let temp_dir = std::env::temp_dir();
     let file_path = temp_dir.join(format!(
-        "diff_test_{}_{}.smt2",
+        "diff_test_{}_{}_{}_{}.smt2",
         solver_bin,
-        std::process::id()
+        std::process::id(),
+        test_name,
+        count
     ));
     if std::fs::write(&file_path, smt_script).is_err() {
         return None;
@@ -62,7 +66,7 @@ fn check_external_differential(test_name: &str, script: &str, expected_fallback:
     // Count (check-sat) calls as a proxy for formula complexity
     let formula_count = script.matches("(check-sat)").count();
 
-    if let Some(z3_res) = run_external_smt("z3", script) {
+    if let Some(z3_res) = run_external_smt("z3", test_name, script) {
         let elapsed = t_start.elapsed();
         println!(
             "[DIFFERENTIAL: {}] Z3 mode | {} formula(s) | {:.2}ms",
@@ -75,7 +79,7 @@ fn check_external_differential(test_name: &str, script: &str, expected_fallback:
             "Differential mismatch with Z3 on {}",
             test_name
         );
-    } else if let Some(cvc5_res) = run_external_smt("cvc5", script) {
+    } else if let Some(cvc5_res) = run_external_smt("cvc5", test_name, script) {
         let elapsed = t_start.elapsed();
         println!(
             "[DIFFERENTIAL: {}] cvc5 mode | {} formula(s) | {:.2}ms",
