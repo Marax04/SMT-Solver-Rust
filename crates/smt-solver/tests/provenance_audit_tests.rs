@@ -55,6 +55,7 @@ fn test_provenance_artifact_markdown_and_json_generation() {
             "xor-self-to-zero".to_string(),
             "and-zero-identity".to_string(),
         ],
+        double_check: None,
     };
 
     // 1. Verify Markdown report
@@ -79,4 +80,17 @@ fn test_provenance_artifact_markdown_and_json_generation() {
     assert!(json.contains(r#""git_commit": "35b5d74""#));
     assert!(json.contains(r#""logic": "QF_BV""#));
     assert!(json.contains(r#""conflicts_count": 0"#));
+
+    // 3. Verify DeobfuscationExplainer
+    let explanation = smt_solver::explain::DeobfuscationExplainer::explain(&artifact);
+    assert!(explanation.contains("Deobfuscation Narrative: Block at 0x401000"));
+    assert!(explanation.contains("Formally Certified"));
+    assert!(explanation.contains("Control Flow Invariance"));
+
+    // 4. Verify ReplayEngine
+    let replay_result =
+        smt_solver::replay::ReplayEngine::replay(&artifact).expect("Replay must run");
+    assert!(replay_result.is_reproducible);
+    assert_eq!(replay_result.decoded_instruction_count, 3);
+    assert!(replay_result.resolution_matched);
 }

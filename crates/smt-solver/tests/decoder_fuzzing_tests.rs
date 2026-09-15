@@ -99,5 +99,55 @@ fn test_structured_instruction_differential_oracle_corpus() {
             "Length mismatch for {:02x?}",
             bytes
         );
+
+        // Verify mnemonic concordance
+        match custom.instruction {
+            smt_solver::lifter::IrInstruction::Nop => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Nop);
+            }
+            smt_solver::lifter::IrInstruction::Push { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Push);
+            }
+            smt_solver::lifter::IrInstruction::Pop { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Pop);
+            }
+            smt_solver::lifter::IrInstruction::Add { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Add);
+            }
+            smt_solver::lifter::IrInstruction::Sub { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Sub);
+            }
+            smt_solver::lifter::IrInstruction::Xor { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Xor);
+            }
+            smt_solver::lifter::IrInstruction::And { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::And);
+            }
+            smt_solver::lifter::IrInstruction::Or { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Or);
+            }
+            smt_solver::lifter::IrInstruction::Cmp { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Cmp);
+            }
+            smt_solver::lifter::IrInstruction::Test { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Test);
+            }
+            smt_solver::lifter::IrInstruction::Mov { .. } => {
+                assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Mov);
+            }
+            smt_solver::lifter::IrInstruction::Jmp { target } => {
+                if target == 0 && oracle_inst.mnemonic() == iced_x86::Mnemonic::Ret {
+                    assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Ret);
+                } else {
+                    assert_eq!(oracle_inst.mnemonic(), iced_x86::Mnemonic::Jmp);
+                }
+            }
+            smt_solver::lifter::IrInstruction::Jcc { .. } => {
+                assert!(
+                    oracle_inst.mnemonic() == iced_x86::Mnemonic::Je
+                        || oracle_inst.mnemonic() == iced_x86::Mnemonic::Jne
+                );
+            }
+        }
     }
 }

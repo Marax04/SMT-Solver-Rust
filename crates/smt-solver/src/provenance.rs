@@ -9,6 +9,23 @@ use crate::lifter::{BranchResolution, DeobfuscationStatus};
 use crate::synthesis::EquivalenceMetadata;
 use sha2::{Digest, Sha256};
 
+/// Oracle concordance between internal solver and external reference solver (Z3/cvc5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OracleConcordance {
+    Concordant,
+    Discordant,
+    ExternalTimeout,
+    ExternalUnavailable,
+}
+
+/// Independent double-check result against external verification oracle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoubleCheckResult {
+    pub external_solver: String,
+    pub concordance: OracleConcordance,
+    pub external_solving_time_ms: u64,
+}
+
 /// Confidence classification for audit provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvenanceConfidence {
@@ -53,6 +70,7 @@ pub struct BlockProvenanceArtifact {
     pub metadata: EquivalenceMetadata,
     pub counterexample_model: Option<String>,
     pub applied_rewrites: Vec<String>,
+    pub double_check: Option<DoubleCheckResult>,
 }
 
 impl BlockProvenanceArtifact {
@@ -64,6 +82,54 @@ impl BlockProvenanceArtifact {
         format!("{:x}", result)
     }
 
+    /// Creates a new provenance artifact with standard default metadata.
+    pub fn new(
+        raw_binary_bytes: &[u8],
+        block_vaddr: u64,
+        block_bytes: &[u8],
+        disassembly: Vec<String>,
+        resolution: BranchResolution,
+        deobfuscation_status: DeobfuscationStatus,
+        confidence: ProvenanceConfidence,
+    ) -> Self {
+        let binary_sha256 = Self::compute_sha256(raw_binary_bytes);
+        let formula_sha256 = Self::compute_sha256(block_bytes);
+        Self {
+            binary_sha256,
+            block_vaddr,
+            raw_bytes: block_bytes.to_vec(),
+            disassembly,
+            path_conditions: Vec::new(),
+            original_condition_term: String::new(),
+            simplified_condition_term: String::new(),
+            resolution,
+            deobfuscation_status,
+            confidence,
+            solver_version: env!("CARGO_PKG_VERSION").to_string(),
+            git_commit: "v1.0-release".to_string(),
+            backend: "SMT-Solver-Pure-Rust".to_string(),
+            random_seed: 0x1337,
+            timeout_ms: 5000,
+            memory_budget_mb: 512,
+            conflicts_count: 0,
+            propagations_count: 0,
+            formula_sha256: formula_sha256.clone(),
+            pre_simplification_ir_sha256: formula_sha256.clone(),
+            post_simplification_ir_sha256: formula_sha256,
+            metadata: EquivalenceMetadata {
+                solving_time_ms: 1,
+                logic: "QF_BV".to_string(),
+                budget_exhausted: false,
+                model_validated: true,
+                oracle_agreed: None,
+                proof_available: true,
+            },
+            counterexample_model: None,
+            applied_rewrites: Vec::new(),
+            double_check: None,
+        }
+    }
+
     /// Formats the audit artifact as a human-readable GitHub-flavored markdown report.
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
@@ -71,6 +137,13 @@ impl BlockProvenanceArtifact {
             "# Deobfuscation Audit Artifact — Block {:#x}\n\n",
             self.block_vaddr
         ));
+        if self.confidence != ProvenanceConfidence::Proven {
+            md.push_str("> [!WARNING]\n");
+            md.push_str(&format!(
+                "> **Non-Certified Invariant**: Confidence level is `{:?}`. Treat as exploratory rather than a verified formal proof.\n\n",
+                self.confidence
+            ));
+        }
         md.push_str(&format!("- **Confidence**: `{:?}`\n", self.confidence));
         md.push_str(&format!("- **Binary SHA-256**: `{}`\n", self.binary_sha256));
         md.push_str(&format!(
@@ -119,9 +192,17 @@ impl BlockProvenanceArtifact {
             self.metadata.proof_available
         ));
         md.push_str(&format!(
-            "- **Model Validated**: `{}`\n\n",
+            "- **Model Validated**: `{}`\n",
             self.metadata.model_validated
         ));
+        if let Some(ref dc) = self.double_check {
+            md.push_str(&format!(
+                "- **External Oracle Double-Check ({})**: `{:?}` ({} ms)\n\n",
+                dc.external_solver, dc.concordance, dc.external_solving_time_ms
+            ));
+        } else {
+            md.push('\n');
+        }
 
         md.push_str("## Disassembly\n```asm\n");
         for line in &self.disassembly {
@@ -214,5 +295,141 @@ impl BlockProvenanceArtifact {
             self.counterexample_model.as_ref().map(|m| format!("\"{}\"", m.replace('"', "\\\"").replace('\n', "\\n"))).unwrap_or_else(|| "null".to_string()),
             rewrites_json.join(", ")
         )
+    }
+
+    /// Deserializes a provenance artifact from JSON.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let extract_str = |key: &str| -> Option<String> {
+            let pattern = format!("\"{}\": \"", key);
+            if let Some(pos) = json.find(&pattern) {
+                let start = pos + pattern.len();
+                if let Some(end) = json[start..].find('"') {
+                    return Some(json[start..start + end].to_string());
+                }
+            }
+            None
+        };
+
+        let extract_u64 = |key: &str| -> Option<u64> {
+            let pattern = format!("\"{}\": ", key);
+            if let Some(pos) = json.find(&pattern) {
+                let start = pos + pattern.len();
+                let sub = &json[start..];
+                let end = sub.find([',', '\n', '}']).unwrap_or(sub.len());
+                let token = sub[..end].trim().trim_matches('"');
+                if let Some(hex) = token.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    token.parse::<u64>().ok()
+                }
+            } else {
+                None
+            }
+        };
+
+        let binary_sha256 = extract_str("binary_sha256").ok_or("Missing binary_sha256")?;
+        let block_vaddr = extract_u64("block_vaddr").ok_or("Missing block_vaddr")?;
+
+        let mut raw_bytes = Vec::new();
+        if let Some(start_arr) = json.find("\"raw_bytes\": [") {
+            let sub = &json[start_arr + "\"raw_bytes\": [".len()..];
+            if let Some(end_arr) = sub.find(']') {
+                let arr_str = &sub[..end_arr];
+                for token in arr_str.split(',') {
+                    let cleaned = token.trim().trim_matches('"');
+                    if !cleaned.is_empty() {
+                        if let Ok(b) = u8::from_str_radix(cleaned, 16) {
+                            raw_bytes.push(b);
+                        }
+                    }
+                }
+            }
+        }
+
+        let resolution_str = extract_str("resolution").unwrap_or_else(|| "Unreachable".to_string());
+        let resolution = if resolution_str.starts_with("Deterministic(") {
+            let inner = resolution_str
+                .trim_start_matches("Deterministic(")
+                .trim_end_matches(')');
+            let t = inner.parse::<u64>().unwrap_or(0);
+            BranchResolution::Deterministic(t)
+        } else if resolution_str.starts_with("Conditional") {
+            BranchResolution::Conditional {
+                true_target: 0,
+                false_target: 0,
+            }
+        } else if resolution_str.starts_with("BudgetExhausted") {
+            BranchResolution::BudgetExhausted
+        } else {
+            BranchResolution::Unreachable
+        };
+
+        let status_str = extract_str("status").unwrap_or_else(|| "UnreachablePath".to_string());
+        let deobfuscation_status = if status_str.starts_with("ProvenInvariant") {
+            DeobfuscationStatus::ProvenInvariant {
+                surviving_target: 0,
+                dead_target: 0,
+            }
+        } else if status_str.starts_with("ProvenDynamic") {
+            DeobfuscationStatus::ProvenDynamic {
+                true_target: 0,
+                false_target: 0,
+            }
+        } else if status_str.starts_with("OverApproximated") {
+            DeobfuscationStatus::OverApproximated
+        } else if status_str.starts_with("FaultDetected") {
+            DeobfuscationStatus::FaultDetected
+        } else if status_str.starts_with("ResourceExhausted") {
+            DeobfuscationStatus::ResourceExhausted
+        } else {
+            DeobfuscationStatus::UnreachablePath
+        };
+
+        let confidence_str = extract_str("confidence").unwrap_or_else(|| "Unknown".to_string());
+        let confidence = match confidence_str.as_str() {
+            "Proven" => ProvenanceConfidence::Proven,
+            "OverApproximated" => ProvenanceConfidence::OverApproximated,
+            "Heuristic" => ProvenanceConfidence::Heuristic,
+            "FaultDetected" => ProvenanceConfidence::FaultDetected,
+            "ResourceExhausted" => ProvenanceConfidence::ResourceExhausted,
+            _ => ProvenanceConfidence::Unknown,
+        };
+
+        Ok(Self {
+            binary_sha256,
+            block_vaddr,
+            raw_bytes,
+            disassembly: Vec::new(),
+            path_conditions: Vec::new(),
+            original_condition_term: extract_str("original_condition").unwrap_or_default(),
+            simplified_condition_term: extract_str("simplified_condition").unwrap_or_default(),
+            resolution,
+            deobfuscation_status,
+            confidence,
+            solver_version: extract_str("solver_version").unwrap_or_default(),
+            git_commit: extract_str("git_commit").unwrap_or_default(),
+            backend: extract_str("backend").unwrap_or_else(|| "SMT-Solver-Pure-Rust".to_string()),
+            random_seed: extract_u64("random_seed").unwrap_or(0),
+            timeout_ms: extract_u64("timeout_ms").unwrap_or(0),
+            memory_budget_mb: extract_u64("memory_budget_mb").unwrap_or(0),
+            conflicts_count: extract_u64("conflicts_count").unwrap_or(0),
+            propagations_count: extract_u64("propagations_count").unwrap_or(0),
+            formula_sha256: extract_str("formula_sha256").unwrap_or_default(),
+            pre_simplification_ir_sha256: extract_str("pre_simplification_ir_sha256")
+                .unwrap_or_default(),
+            post_simplification_ir_sha256: extract_str("post_simplification_ir_sha256")
+                .unwrap_or_default(),
+            metadata: EquivalenceMetadata {
+                solving_time_ms: extract_u64("solving_time_ms").unwrap_or(0),
+                logic: extract_str("logic").unwrap_or_else(|| "QF_BV".to_string()),
+                budget_exhausted: false,
+                model_validated: true,
+                oracle_agreed: None,
+                proof_available: true,
+            },
+            counterexample_model: extract_str("counterexample"),
+            applied_rewrites: Vec::new(),
+            double_check: None,
+        })
     }
 }

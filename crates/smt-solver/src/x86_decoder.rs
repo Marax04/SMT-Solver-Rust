@@ -28,6 +28,51 @@ pub const REGS_8: [&str; 16] = [
 
 pub const REGS_8_LEGACY: [&str; 8] = ["al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"];
 
+/// Structured, typed error hierarchy for x86-64 machine code decoding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecoderError {
+    EmptyBuffer,
+    TruncatedInstruction(&'static str),
+    UnsupportedOpcode { opcode: u8, is_escape_0f: bool },
+    UnsupportedGroupOpcode { opcode: u8, group_op: u8 },
+    MissingModRm { opcode: u8 },
+    InvalidOperandMode { opcode: u8, mode: u8 },
+    MalformedInstruction(String),
+}
+
+impl std::fmt::Display for DecoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecoderError::EmptyBuffer => write!(f, "Unexpected EOF: empty instruction buffer"),
+            DecoderError::TruncatedInstruction(context) => {
+                write!(f, "Truncated instruction: {}", context)
+            }
+            DecoderError::UnsupportedOpcode {
+                opcode,
+                is_escape_0f,
+            } => {
+                if *is_escape_0f {
+                    write!(f, "Unsupported 0x0F opcode 0x{:02x}", opcode)
+                } else {
+                    write!(f, "Unsupported x86-64 opcode 0x{:02x}", opcode)
+                }
+            }
+            DecoderError::UnsupportedGroupOpcode { opcode, group_op } => {
+                write!(f, "Unsupported 0x{:02x} /{} op", opcode, group_op)
+            }
+            DecoderError::MissingModRm { opcode } => {
+                write!(f, "Missing ModR/M byte for 0x{:02x}", opcode)
+            }
+            DecoderError::InvalidOperandMode { opcode, mode } => {
+                write!(f, "Unsupported operand mode {} for 0x{:02x}", mode, opcode)
+            }
+            DecoderError::MalformedInstruction(msg) => write!(f, "Malformed instruction: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for DecoderError {}
+
 /// Result of decoding a single machine code instruction.
 #[derive(Debug, Clone)]
 pub struct DecodedInstruction {
@@ -52,9 +97,9 @@ pub struct X86Decoder;
 
 impl X86Decoder {
     /// Decodes a single instruction starting at `bytes[0]` with instruction pointer `ip`.
-    pub fn decode(bytes: &[u8], ip: u64) -> Result<DecodedInstruction, String> {
+    pub fn decode(bytes: &[u8], ip: u64) -> Result<DecodedInstruction, DecoderError> {
         if bytes.is_empty() {
-            return Err("Unexpected EOF: empty instruction buffer".to_string());
+            return Err(DecoderError::EmptyBuffer);
         }
 
         let mut offset = 0;
@@ -74,7 +119,7 @@ impl X86Decoder {
             has_rex = true;
             offset += 1;
             if offset >= bytes.len() {
-                return Err("Truncated instruction after REX prefix".to_string());
+                return Err(DecoderError::TruncatedInstruction("after REX prefix"));
             }
         }
 
@@ -138,7 +183,7 @@ impl X86Decoder {
                 let reg_idx = (opcode - 0xb8) as usize + rex_b;
                 let imm = if width == 64 {
                     if offset + 8 > bytes.len() {
-                        return Err("Truncated MOV imm64".to_string());
+                        return Err(DecoderError::TruncatedInstruction("MOV imm64"));
                     }
                     let val = u64::from_le_bytes([
                         bytes[offset],
@@ -154,7 +199,7 @@ impl X86Decoder {
                     val
                 } else {
                     if offset + 4 > bytes.len() {
-                        return Err("Truncated MOV imm32".to_string());
+                        return Err(DecoderError::TruncatedInstruction("MOV imm32"));
                     }
                     let val = u32::from_le_bytes([
                         bytes[offset],
@@ -178,7 +223,7 @@ impl X86Decoder {
             // JMP rel8 (0xEB)
             0xeb => {
                 if offset >= bytes.len() {
-                    return Err("Truncated JMP rel8".to_string());
+                    return Err(DecoderError::TruncatedInstruction("JMP rel8"));
                 }
                 let rel8 = bytes[offset] as i8 as i64;
                 offset += 1;
@@ -192,7 +237,7 @@ impl X86Decoder {
             // JMP rel32 (0xE9)
             0xe9 => {
                 if offset + 4 > bytes.len() {
-                    return Err("Truncated JMP rel32".to_string());
+                    return Err(DecoderError::TruncatedInstruction("JMP rel32"));
                 }
                 let rel32 = i32::from_le_bytes([
                     bytes[offset],
@@ -211,7 +256,7 @@ impl X86Decoder {
             // Jcc rel8 (0x70 - 0x7F)
             0x70..=0x7f => {
                 if offset >= bytes.len() {
-                    return Err("Truncated Jcc rel8".to_string());
+                    return Err(DecoderError::TruncatedInstruction("Jcc rel8"));
                 }
                 let rel8 = bytes[offset] as i8 as i64;
                 offset += 1;
@@ -249,7 +294,7 @@ impl X86Decoder {
             // 2-byte escape (0x0F)
             0x0f => {
                 if offset >= bytes.len() {
-                    return Err("Truncated 0x0F escape".to_string());
+                    return Err(DecoderError::TruncatedInstruction("0x0F escape"));
                 }
                 let op2 = bytes[offset];
                 offset += 1;
@@ -257,7 +302,7 @@ impl X86Decoder {
                     // Jcc rel32 (0x0F 0x80..0x8F)
                     0x80..=0x8f => {
                         if offset + 4 > bytes.len() {
-                            return Err("Truncated Jcc rel32".to_string());
+                            return Err(DecoderError::TruncatedInstruction("Jcc rel32"));
                         }
                         let rel32 = i32::from_le_bytes([
                             bytes[offset],
@@ -296,7 +341,10 @@ impl X86Decoder {
                             length: offset,
                         })
                     }
-                    _ => Err(format!("Unsupported 0x0F opcode 0x{:02x}", op2)),
+                    _ => Err(DecoderError::UnsupportedOpcode {
+                        opcode: op2,
+                        is_escape_0f: true,
+                    }),
                 }
             }
 
@@ -304,7 +352,7 @@ impl X86Decoder {
             0x01 | 0x03 | 0x09 | 0x0b | 0x21 | 0x23 | 0x29 | 0x2b | 0x31 | 0x33 | 0x39 | 0x3b
             | 0x85 | 0x89 | 0x8b => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte".to_string());
+                    return Err(DecoderError::MissingModRm { opcode });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -400,7 +448,7 @@ impl X86Decoder {
             // Group 1 immediate arithmetic (0x83 /reg rm, imm8)
             0x83 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0x83".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0x83 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -423,7 +471,7 @@ impl X86Decoder {
                 let target = Self::decode_rm(&ctx, &mut offset)?;
 
                 if offset >= bytes.len() {
-                    return Err("Missing imm8 byte for 0x83".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm8 byte for 0x83"));
                 }
                 let imm8 = bytes[offset] as i8 as i64 as u64;
                 offset += 1;
@@ -454,7 +502,12 @@ impl X86Decoder {
                         left: target,
                         right: imm_op,
                     },
-                    _ => return Err(format!("Unsupported 0x83 /{} op", op_reg)),
+                    _ => {
+                        return Err(DecoderError::UnsupportedGroupOpcode {
+                            opcode: 0x83,
+                            group_op: op_reg,
+                        })
+                    }
                 };
 
                 Ok(DecodedInstruction {
@@ -466,7 +519,7 @@ impl X86Decoder {
             // Group 1 immediate arithmetic (0x81 /reg rm, imm32)
             0x81 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0x81".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0x81 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -489,7 +542,7 @@ impl X86Decoder {
                 let target = Self::decode_rm(&ctx, &mut offset)?;
 
                 if offset + 4 > bytes.len() {
-                    return Err("Missing imm32 for 0x81".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm32 for 0x81"));
                 }
                 let imm32 = i32::from_le_bytes([
                     bytes[offset],
@@ -525,7 +578,12 @@ impl X86Decoder {
                         left: target,
                         right: imm_op,
                     },
-                    _ => return Err(format!("Unsupported 0x81 /{} op", op_reg)),
+                    _ => {
+                        return Err(DecoderError::UnsupportedGroupOpcode {
+                            opcode: 0x81,
+                            group_op: op_reg,
+                        })
+                    }
                 };
 
                 Ok(DecodedInstruction {
@@ -537,7 +595,7 @@ impl X86Decoder {
             // MOV r/m, imm32 (0xC7 /0)
             0xc7 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0xC7".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0xC7 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -547,10 +605,10 @@ impl X86Decoder {
                 let rm_raw = modrm & 7;
 
                 if op_reg != 0 {
-                    return Err(format!(
-                        "Unsupported 0xC7 /{} op (only /0 MOV is supported)",
-                        op_reg
-                    ));
+                    return Err(DecoderError::UnsupportedGroupOpcode {
+                        opcode: 0xC7,
+                        group_op: op_reg,
+                    });
                 }
 
                 let ctx = ModRmContext {
@@ -567,7 +625,7 @@ impl X86Decoder {
                 let target = Self::decode_rm(&ctx, &mut offset)?;
 
                 if offset + 4 > bytes.len() {
-                    return Err("Missing imm32 for 0xC7".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm32 for 0xC7"));
                 }
                 let imm32 = if width == 64 {
                     i32::from_le_bytes([
@@ -598,7 +656,7 @@ impl X86Decoder {
             // TEST r/m8, reg8 (0x84)
             0x84 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0x84".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0x84 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -630,7 +688,7 @@ impl X86Decoder {
             // TEST AL, imm8 (0xA8)
             0xa8 => {
                 if offset >= bytes.len() {
-                    return Err("Missing imm8 for 0xA8".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm8 for 0xA8"));
                 }
                 let imm8 = bytes[offset] as u64;
                 offset += 1;
@@ -647,7 +705,7 @@ impl X86Decoder {
             0xa9 => {
                 let imm_len = if width == 16 { 2 } else { 4 };
                 if offset + imm_len > bytes.len() {
-                    return Err("Missing imm for 0xA9".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm for 0xA9"));
                 }
                 let imm = if imm_len == 2 {
                     u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as u64
@@ -673,7 +731,7 @@ impl X86Decoder {
             // Group 3 TEST r/m8, imm8 (0xF6 /0)
             0xf6 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0xF6".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0xF6 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -682,7 +740,10 @@ impl X86Decoder {
                 let rm_raw = modrm & 7;
 
                 if op_reg != 0 {
-                    return Err(format!("Unsupported 0xF6 /{} op", op_reg));
+                    return Err(DecoderError::UnsupportedGroupOpcode {
+                        opcode: 0xF6,
+                        group_op: op_reg,
+                    });
                 }
 
                 let ctx = ModRmContext {
@@ -699,7 +760,7 @@ impl X86Decoder {
                 let rm_op = Self::decode_rm(&ctx, &mut offset)?;
 
                 if offset >= bytes.len() {
-                    return Err("Missing imm8 for 0xF6 /0".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm8 for 0xF6 /0"));
                 }
                 let imm8 = bytes[offset] as u64;
                 offset += 1;
@@ -716,7 +777,7 @@ impl X86Decoder {
             // Group 3 TEST r/m, imm32 (0xF7 /0)
             0xf7 => {
                 if offset >= bytes.len() {
-                    return Err("Missing ModR/M byte for 0xF7".to_string());
+                    return Err(DecoderError::MissingModRm { opcode: 0xF7 });
                 }
                 let modrm = bytes[offset];
                 offset += 1;
@@ -725,7 +786,10 @@ impl X86Decoder {
                 let rm_raw = modrm & 7;
 
                 if op_reg != 0 {
-                    return Err(format!("Unsupported 0xF7 /{} op", op_reg));
+                    return Err(DecoderError::UnsupportedGroupOpcode {
+                        opcode: 0xF7,
+                        group_op: op_reg,
+                    });
                 }
 
                 let ctx = ModRmContext {
@@ -742,7 +806,7 @@ impl X86Decoder {
                 let rm_op = Self::decode_rm(&ctx, &mut offset)?;
 
                 if offset + 4 > bytes.len() {
-                    return Err("Missing imm32 for 0xF7 /0".to_string());
+                    return Err(DecoderError::TruncatedInstruction("imm32 for 0xF7 /0"));
                 }
                 let imm32 = u32::from_le_bytes([
                     bytes[offset],
@@ -761,11 +825,14 @@ impl X86Decoder {
                 })
             }
 
-            _ => Err(format!("Unsupported x86-64 opcode 0x{:02x}", opcode)),
+            _ => Err(DecoderError::UnsupportedOpcode {
+                opcode,
+                is_escape_0f: false,
+            }),
         }
     }
 
-    fn decode_rm(ctx: &ModRmContext<'_>, offset: &mut usize) -> Result<Operand, String> {
+    fn decode_rm(ctx: &ModRmContext<'_>, offset: &mut usize) -> Result<Operand, DecoderError> {
         let get_reg = |idx: usize, w: u32| -> Operand {
             match w {
                 64 => Operand::Reg(REGS_64[idx % 16].to_string(), 64),
@@ -795,7 +862,7 @@ impl X86Decoder {
 
         if (ctx.rm_raw & 7) == 4 {
             if *offset >= ctx.bytes.len() {
-                return Err("Truncated SIB byte".to_string());
+                return Err(DecoderError::TruncatedInstruction("SIB byte"));
             }
             let sib = ctx.bytes[*offset];
             *offset += 1;
@@ -810,7 +877,7 @@ impl X86Decoder {
 
             if (sib & 7) == 5 && ctx.mode == 0 {
                 if *offset + 4 > ctx.bytes.len() {
-                    return Err("Truncated disp32 in SIB".to_string());
+                    return Err(DecoderError::TruncatedInstruction("disp32 in SIB"));
                 }
                 disp = i32::from_le_bytes([
                     ctx.bytes[*offset],
@@ -824,7 +891,7 @@ impl X86Decoder {
             }
         } else if ctx.mode == 0 && (ctx.rm_raw & 7) == 5 {
             if *offset + 4 > ctx.bytes.len() {
-                return Err("Truncated RIP-relative disp32".to_string());
+                return Err(DecoderError::TruncatedInstruction("RIP-relative disp32"));
             }
             let rel32 = i32::from_le_bytes([
                 ctx.bytes[*offset],
@@ -848,13 +915,13 @@ impl X86Decoder {
 
         if ctx.mode == 1 {
             if *offset >= ctx.bytes.len() {
-                return Err("Truncated disp8".to_string());
+                return Err(DecoderError::TruncatedInstruction("disp8"));
             }
             disp = ctx.bytes[*offset] as i8 as i64;
             *offset += 1;
         } else if ctx.mode == 2 {
             if *offset + 4 > ctx.bytes.len() {
-                return Err("Truncated disp32".to_string());
+                return Err(DecoderError::TruncatedInstruction("disp32"));
             }
             disp = i32::from_le_bytes([
                 ctx.bytes[*offset],
@@ -874,7 +941,10 @@ impl X86Decoder {
     }
 
     /// Decodes a contiguous sequence of machine code bytes into a BasicBlock until a terminator is met.
-    pub fn decode_block(bytes: &[u8], base_ip: u64) -> Result<crate::lifter::BasicBlock, String> {
+    pub fn decode_block(
+        bytes: &[u8],
+        base_ip: u64,
+    ) -> Result<crate::lifter::BasicBlock, DecoderError> {
         let mut bb = crate::lifter::BasicBlock::new(base_ip);
         let mut curr_offset = 0;
 

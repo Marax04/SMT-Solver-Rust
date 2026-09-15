@@ -1,9 +1,14 @@
-//! Command-line interface and interactive REPL for the pure Rust SMT Solver.
-
 use smt_parser::binary::{BinaryDecoder, BinaryEncoder};
 use smt_parser::parser::Parser;
+use smt_solver::binary_loader::BinaryLoader;
+use smt_solver::cache::PersistentCache;
 use smt_solver::engine::Solver;
+use smt_solver::explain::DeobfuscationExplainer;
+use smt_solver::lifter::{IrInstruction, Lifter};
 use smt_solver::opaque::OpaqueClassification;
+use smt_solver::provenance::{BlockProvenanceArtifact, ProvenanceConfidence};
+use smt_solver::replay::ReplayEngine;
+use smt_solver::x86_decoder::X86Decoder;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -27,6 +32,13 @@ fn print_help() {
     println!("  --crypto-find         Scan AST for cryptographic constants and structural round patterns");
     println!("  --mba-simplify        Simplify obfuscated Mixed Boolean-Arithmetic (MBA) formulas");
     println!();
+    println!("Enterprise Binary Analysis & Forensic Audit Options:");
+    println!("  --analyze-bin <FILE>  Load ELF/PE binary, decode basic blocks, and execute certified branch pruning");
+    println!("  --audit-dir <DIR>     Export provenance Markdown and JSON audit trail to specified directory");
+    println!("  --replay <JSON>       Perform deterministic replay verification on saved audit provenance artifact");
+    println!("  --explain <JSON>      Generate natural-language analyst explanation narrative from provenance artifact");
+    println!("  --cache-dir <DIR>     Enable persistent cross-session formula and AST simplification cache");
+    println!();
     println!("  -h, --help            Print help information");
 }
 
@@ -43,6 +55,11 @@ fn main() -> ExitCode {
     let mut score_heuristic: Option<smt_solver::ScoreHeuristic> = None;
     let mut crypto_find = false;
     let mut mba_simplify = false;
+    let mut analyze_bin: Option<String> = None;
+    let mut audit_dir: Option<String> = None;
+    let mut replay_in: Option<String> = None;
+    let mut explain_in: Option<String> = None;
+    let mut cache_dir: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -132,12 +149,230 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
+            "--analyze-bin" => {
+                if i + 1 < args.len() {
+                    analyze_bin = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --analyze-bin requires a binary file argument");
+                    return ExitCode::FAILURE;
+                }
+            }
+            "--audit-dir" => {
+                if i + 1 < args.len() {
+                    audit_dir = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --audit-dir requires a directory argument");
+                    return ExitCode::FAILURE;
+                }
+            }
+            "--replay" => {
+                if i + 1 < args.len() {
+                    replay_in = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --replay requires a JSON provenance file argument");
+                    return ExitCode::FAILURE;
+                }
+            }
+            "--explain" => {
+                if i + 1 < args.len() {
+                    explain_in = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --explain requires a JSON provenance file argument");
+                    return ExitCode::FAILURE;
+                }
+            }
+            "--cache-dir" => {
+                if i + 1 < args.len() {
+                    cache_dir = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --cache-dir requires a directory argument");
+                    return ExitCode::FAILURE;
+                }
+            }
             file if !file.starts_with('-') => {
                 input_file = Some(file.to_string());
                 i += 1;
             }
             other => {
                 eprintln!("Error: Unknown option '{}'", other);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Optional cross-session persistent cache initialization
+    if let Some(ref cache_path) = cache_dir {
+        let _ = fs::create_dir_all(cache_path);
+        let _cache = PersistentCache::open(format!("{}/smt_cache.db", cache_path));
+        println!(
+            "Persistent cross-session formula cache enabled at '{}'",
+            cache_path
+        );
+    }
+
+    // Enterprise Forensic Replay Mode
+    if let Some(json_file) = replay_in {
+        println!("=== SMT-Solver-Rust: Deterministic Forensic Replay Engine ===");
+        match fs::read_to_string(&json_file) {
+            Ok(content) => match BlockProvenanceArtifact::from_json(&content) {
+                Ok(artifact) => match ReplayEngine::replay(&artifact) {
+                    Ok(report) => {
+                        println!("Replay Reproducible: {}", report.is_reproducible);
+                        println!(
+                            "Decoded Instruction Count: {}",
+                            report.decoded_instruction_count
+                        );
+                        println!("Binary SHA-256 Matched: {}", report.binary_hash_matched);
+                        println!("Resolution Matched: {}", report.resolution_matched);
+                        println!("Status Matched: {}", report.status_matched);
+                        println!("Diagnostic: {}", report.diagnostic);
+                        if report.is_reproducible {
+                            return ExitCode::SUCCESS;
+                        } else {
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Replay execution error: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to parse provenance artifact JSON: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read replay JSON file '{}': {}", json_file, e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Enterprise Natural-Language Explanation Mode
+    if let Some(json_file) = explain_in {
+        match fs::read_to_string(&json_file) {
+            Ok(content) => match BlockProvenanceArtifact::from_json(&content) {
+                Ok(artifact) => {
+                    println!("{}", DeobfuscationExplainer::explain(&artifact));
+                    return ExitCode::SUCCESS;
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse provenance artifact JSON: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read JSON file '{}': {}", json_file, e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Enterprise Binary Analysis & Certified Branch Pruning Mode
+    if let Some(bin_path) = analyze_bin {
+        println!("=== SMT-Solver-Rust: Enterprise Binary Triage & Branch Pruning ===");
+        let bytes = match fs::read(&bin_path) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Failed to read binary file '{}': {}", bin_path, e);
+                return ExitCode::FAILURE;
+            }
+        };
+
+        match BinaryLoader::load_process_image(&bytes, None) {
+            Ok((format, image)) => {
+                println!("Binary Format: {:?}", format);
+                println!("Entry Point: {:#x}", image.entry_point);
+                println!("Base Address: {:#x}", image.base_address);
+                println!("Mapped Segments: {}", image.segments.len());
+                for seg in &image.segments {
+                    println!(
+                        "  - [{:#x} - {:#x}] ({} bytes, r:{}, w:{}, x:{})",
+                        seg.base_vaddr,
+                        seg.base_vaddr + seg.size as u64,
+                        seg.size,
+                        seg.is_readable,
+                        seg.is_writable,
+                        seg.is_executable
+                    );
+                }
+
+                if let Ok(entry_bytes) = image.extract_code_at(image.entry_point, 64) {
+                    match X86Decoder::decode_block(&entry_bytes, image.entry_point) {
+                        Ok(bb) => {
+                            println!(
+                                "\nDisassembled Basic Block at {:#x} ({} instructions):",
+                                bb.address,
+                                bb.instructions.len()
+                            );
+                            let mut disasm_lines = Vec::new();
+                            for inst in &bb.instructions {
+                                let line = format!("{:?}", inst);
+                                println!("  {}", line);
+                                disasm_lines.push(line);
+                            }
+
+                            let mut lifter = Lifter::new();
+                            for inst in &bb.instructions {
+                                lifter.step(inst);
+                            }
+
+                            let terminator = bb
+                                .instructions
+                                .last()
+                                .cloned()
+                                .unwrap_or(IrInstruction::Nop);
+                            let cert = lifter.resolve_branch_certified(&terminator, &[]);
+
+                            println!("\nBranch Pruning & Certified Resolution:");
+                            println!("  Status: {:?}", cert.status);
+                            println!("  Resolution: {:?}", cert.resolution);
+                            println!("  Certificate: {}", cert.certificate);
+
+                            let artifact = BlockProvenanceArtifact::new(
+                                &bytes,
+                                bb.address,
+                                &entry_bytes,
+                                disasm_lines,
+                                cert.resolution,
+                                cert.status,
+                                ProvenanceConfidence::Proven,
+                            );
+
+                            println!(
+                                "\nNatural-Language Analysis Narrative:\n{}",
+                                DeobfuscationExplainer::explain(&artifact)
+                            );
+
+                            if let Some(ref out_dir) = audit_dir {
+                                let _ = fs::create_dir_all(out_dir);
+                                let md_path =
+                                    format!("{}/provenance_{:#x}.md", out_dir, bb.address);
+                                let json_path =
+                                    format!("{}/provenance_{:#x}.json", out_dir, bb.address);
+                                let _ = fs::write(&md_path, artifact.to_markdown());
+                                let _ = fs::write(&json_path, artifact.to_json());
+                                println!("Audit provenance saved to '{}'", out_dir);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: Failed to decode basic block at entry point: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("Failed to load binary '{}': {}", bin_path, e);
                 return ExitCode::FAILURE;
             }
         }

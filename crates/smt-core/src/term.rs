@@ -302,6 +302,12 @@ impl TermArena {
         Ok(self.intern(op, vec![a, b], sort_a))
     }
 
+    /// Unary Bit-Vector operations (bvnot, bvneg).
+    pub fn bv_unop(&mut self, op: Op, a: TermId) -> SmtResult<TermId> {
+        let sort_a = self.sort_of(a);
+        Ok(self.intern(op, vec![a], sort_a))
+    }
+
     /// Bit-Vector extraction: `((_ extract high low) term)`.
     pub fn bv_extract(
         &mut self,

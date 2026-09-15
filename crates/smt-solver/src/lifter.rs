@@ -243,6 +243,60 @@ pub enum MemoryStateKind {
     Unknown,
 }
 
+/// Configurable execution limits to bound path and expression explosion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceLimits {
+    pub max_ast_nodes: usize,
+    pub timeout_ms: u64,
+    pub max_basic_blocks: usize,
+    pub max_store_chain_depth: usize,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_ast_nodes: 50_000,
+            timeout_ms: 10_000,
+            max_basic_blocks: 1_000,
+            max_store_chain_depth: 64,
+        }
+    }
+}
+
+/// Structured, typed error hierarchy for symbolic lifting and execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LifterError {
+    Decoder(crate::x86_decoder::DecoderError),
+    MemoryFault(MemoryStateKind, u64),
+    BudgetExhausted,
+    UnresolvedBranchCondition(BranchCondition),
+    MalformedTerm(String),
+}
+
+impl std::fmt::Display for LifterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LifterError::Decoder(d) => write!(f, "Decoder error: {}", d),
+            LifterError::MemoryFault(kind, addr) => {
+                write!(f, "Memory fault {:?} at {:#x}", kind, addr)
+            }
+            LifterError::BudgetExhausted => write!(f, "Resource budget exhausted during lifting"),
+            LifterError::UnresolvedBranchCondition(c) => {
+                write!(f, "Unresolved branch condition {:?}", c)
+            }
+            LifterError::MalformedTerm(msg) => write!(f, "Malformed term: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for LifterError {}
+
+impl From<crate::x86_decoder::DecoderError> for LifterError {
+    fn from(err: crate::x86_decoder::DecoderError) -> Self {
+        LifterError::Decoder(err)
+    }
+}
+
 /// Execution policy defining how memory access violations are handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryPolicy {
@@ -484,6 +538,7 @@ pub struct Lifter {
     pub had_budget_exhaustion: bool,
     pub fault_address: Option<u64>,
     pub max_store_chain_depth: usize,
+    pub limits: ResourceLimits,
 }
 
 impl Default for Lifter {
@@ -524,6 +579,7 @@ impl Lifter {
             had_budget_exhaustion: false,
             fault_address: None,
             max_store_chain_depth: 64,
+            limits: ResourceLimits::default(),
         }
     }
 
@@ -1378,7 +1434,7 @@ impl Lifter {
         &mut self,
         bytes: &[u8],
         ip: u64,
-    ) -> Result<Vec<IrInstruction>, String> {
+    ) -> Result<Vec<IrInstruction>, LifterError> {
         let mut current_ip = ip;
         let mut offset = 0;
         let mut instrs = Vec::new();

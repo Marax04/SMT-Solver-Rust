@@ -8,14 +8,15 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Required: ensures differential tests panic rather than silently falling back
-  # to self-consistency mode when z3/cvc5 are unavailable.
-  STRICT_DIFFERENTIAL: "1"
 
 jobs:
   build-and-test:
-    name: Build & Test (release)
-    runs-on: ubuntu-latest
+    name: Build & Test (${{ matrix.os }}, release)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -36,11 +37,22 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Install z3 (required for STRICT_DIFFERENTIAL mode)
+      - name: Install z3 (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y z3
           z3 --version
+
+      - name: Install z3 (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install z3 -y --no-progress
+          $z3Exe = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\z3" -Recurse -Filter "z3.exe" | Select-Object -First 1
+          if ($z3Exe) {
+            Add-Content $env:GITHUB_PATH $z3Exe.DirectoryName
+          }
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -48,13 +60,18 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --release --workspace -- -D warnings
 
-      - name: Run all workspace tests (release, strict differential)
+      - name: Run all workspace tests (release)
+        shell: bash
         run: cargo test --release --workspace -- --nocapture
         env:
           STRICT_DIFFERENTIAL: "1"
           RUST_BACKTRACE: "1"
 
+      - name: Run doctests
+        run: cargo test --doc --workspace
+
       - name: Verify zero #[allow(...)] attributes
+        shell: bash
         run: |
           count=$(grep -r '#\[allow' crates/ --include='*.rs' | wc -l)
           echo "allow() count: $count"
@@ -63,3 +80,16 @@ jobs:
             grep -r '#\[allow' crates/ --include='*.rs'
             exit 1
           fi
+
+  supply-chain:
+    name: Supply Chain Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --config deny.toml
