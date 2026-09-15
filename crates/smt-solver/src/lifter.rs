@@ -416,6 +416,9 @@ struct SavedScope {
     stack_memory: HashMap<i64, TermId>,
     named_memory: HashMap<(String, i64), TermId>,
     symbolic_memory: Vec<(TermId, TermId)>,
+    read_only_ranges: Vec<(u64, u64)>,
+    bss_ranges: Vec<(u64, u64)>,
+    security_violations: Vec<String>,
 }
 
 /// Symbolic lifter and path condition analyzer.
@@ -433,6 +436,9 @@ pub struct Lifter {
     named_memory: HashMap<(String, i64), TermId>,
     symbolic_memory: Vec<(TermId, TermId)>,
     scope_stack: Vec<SavedScope>,
+    pub read_only_ranges: Vec<(u64, u64)>,
+    pub bss_ranges: Vec<(u64, u64)>,
+    pub security_violations: Vec<String>,
 }
 
 impl Default for Lifter {
@@ -462,6 +468,9 @@ impl Lifter {
             named_memory: HashMap::new(),
             symbolic_memory: Vec::new(),
             scope_stack: Vec::new(),
+            read_only_ranges: Vec::new(),
+            bss_ranges: Vec::new(),
+            security_violations: Vec::new(),
         }
     }
 
@@ -478,6 +487,9 @@ impl Lifter {
             stack_memory: self.stack_memory.clone(),
             named_memory: self.named_memory.clone(),
             symbolic_memory: self.symbolic_memory.clone(),
+            read_only_ranges: self.read_only_ranges.clone(),
+            bss_ranges: self.bss_ranges.clone(),
+            security_violations: self.security_violations.clone(),
         });
     }
 
@@ -494,9 +506,43 @@ impl Lifter {
             self.stack_memory = saved.stack_memory;
             self.named_memory = saved.named_memory;
             self.symbolic_memory = saved.symbolic_memory;
+            self.read_only_ranges = saved.read_only_ranges;
+            self.bss_ranges = saved.bss_ranges;
+            self.security_violations = saved.security_violations;
             true
         } else {
             false
+        }
+    }
+
+    /// Checks if a given physical memory address resides within a read-only range.
+    pub fn is_read_only(&self, addr: u64) -> bool {
+        self.read_only_ranges
+            .iter()
+            .any(|(start, end)| addr >= *start && addr < *end)
+    }
+
+    /// Checks if a given physical memory address resides within a zeroed BSS range.
+    pub fn is_in_bss(&self, addr: u64) -> bool {
+        self.bss_ranges
+            .iter()
+            .any(|(start, end)| addr >= *start && addr < *end)
+    }
+
+    /// Maps a loaded process image into the lifter's initial memory state,
+    /// populating concrete memory bytes, enforcing read-only ranges, and tracking BSS.
+    pub fn load_process_image(&mut self, image: &crate::binary_loader::LoadedProcessImage) {
+        for seg in &image.segments {
+            let start = seg.base_vaddr;
+            let end = start.saturating_add(seg.size as u64);
+            if !seg.is_writable {
+                self.read_only_ranges.push((start, end));
+            }
+            for (i, &b) in seg.data.iter().enumerate() {
+                let addr = start.saturating_add(i as u64);
+                let b_term = self.terms.bv_const((b as u64).into(), 8, &mut self.sorts);
+                self.memory.insert(addr, b_term);
+            }
         }
     }
 
@@ -736,6 +782,10 @@ impl Lifter {
                 let target = phys.wrapping_add(byte_offset as u64);
                 let mut res = if let Some(&t) = self.memory.get(&target) {
                     t
+                } else if self.is_in_bss(target) {
+                    let zero8 = self.terms.bv_const(0u64.into(), 8, &mut self.sorts);
+                    self.memory.insert(target, zero8);
+                    zero8
                 } else {
                     let sort8 = self.sorts.bv(8);
                     let var = self.terms.var(format!("uninit_mem_{:x}", target), sort8);
@@ -745,6 +795,18 @@ impl Lifter {
                 if !self.symbolic_memory.is_empty() {
                     let target_term = self.terms.bv_const(target.into(), 64, &mut self.sorts);
                     for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
+                        if *s_addr == target_term {
+                            // MUST-ALIAS: syntactic or constant exact match
+                            res = *s_val;
+                            break;
+                        }
+                        if let Some(c_s_addr) = self.eval_concrete_u64(*s_addr) {
+                            if c_s_addr != target {
+                                // MUST-NOT-ALIAS: proven distinct concrete addresses
+                                continue;
+                            }
+                        }
+                        // MAY-ALIAS: cannot rule out alias statically, generate SMT ITE term
                         let eq = self.terms.eq(*s_addr, target_term, &self.sorts);
                         res = self.terms.ite(eq, *s_val, res);
                     }
@@ -789,6 +851,21 @@ impl Lifter {
                 let sort8 = self.sorts.bv(8);
                 let mut res = self.terms.var(format!("uninit_sym_{:?}", byte_addr), sort8);
                 for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
+                    if *s_addr == byte_addr {
+                        // MUST-ALIAS: exact term identity
+                        res = *s_val;
+                        break;
+                    }
+                    if let (Some(c1), Some(c2)) = (
+                        self.eval_concrete_u64(*s_addr),
+                        self.eval_concrete_u64(byte_addr),
+                    ) {
+                        if c1 != c2 {
+                            // MUST-NOT-ALIAS: proven distinct concrete addresses
+                            continue;
+                        }
+                    }
+                    // MAY-ALIAS: fold into SMT ITE expression
                     let eq = self.terms.eq(*s_addr, byte_addr, &self.sorts);
                     res = self.terms.ite(eq, *s_val, res);
                 }
@@ -801,6 +878,10 @@ impl Lifter {
         match addr {
             MemoryAddress::Physical(phys) => {
                 let target = phys.wrapping_add(byte_offset as u64);
+                if self.is_read_only(target) {
+                    self.security_violations
+                        .push(format!("Write to read-only address {:#x}", target));
+                }
                 self.memory.insert(target, val);
             }
             MemoryAddress::Stack(stack_off) => {

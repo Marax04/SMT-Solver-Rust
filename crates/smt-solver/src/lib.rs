@@ -7,12 +7,17 @@ pub mod engine;
 pub mod lifter;
 pub mod model;
 pub mod opaque;
+pub mod provenance;
 pub mod stats;
 pub mod synthesis;
 pub mod validator;
 pub mod x86_decoder;
 
-pub use binary_loader::{BinaryFormat, BinaryLoader, Elf64File, Elf64Section, Pe64File, PeSection};
+pub use binary_loader::{
+    BinaryFormat, BinaryLoader, Elf64File, Elf64ProgramHeader, Elf64Section, LoadedProcessImage,
+    LoaderError, MemorySegment, Pe64File, PeDataDirectory, PeImport, PeRelocationBlock, PeSection,
+    PeTlsDirectory,
+};
 pub use crypto::{CryptoAlgorithm, CryptoMatch, CryptoScanner};
 pub use engine::{CheckSatResult, ScoreHeuristic, Solver};
 pub use lifter::{
@@ -24,6 +29,7 @@ pub use opaque::{
     FoldedTraceResult, OpaqueClassification, OpaquePredicateAnalyzer, PathConditionFolder,
     TraceBranch,
 };
+pub use provenance::BlockProvenanceArtifact;
 pub use stats::SolverMetrics;
 pub use synthesis::{
     EquivalenceMetadata, EquivalenceResult, Gf2LinearMbaSimplifier, IoProgramSynthesizer,
