@@ -1,0 +1,5 @@
+(set-logic QF_BV)
+(declare-const a (_ BitVec 64))
+(declare-const b (_ BitVec 64))
+(assert (bvult a b))
+(check-sat)

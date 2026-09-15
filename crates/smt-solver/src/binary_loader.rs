@@ -226,6 +226,16 @@ pub struct Elf64File {
 
 impl Elf64File {
     /// Parses an ELF64 binary from raw file bytes with checked arithmetic and resource limits.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_solver::binary_loader::{Elf64File, LoaderError};
+    /// let err = Elf64File::parse(&[0u8; 10]).unwrap_err();
+    /// match err {
+    ///     LoaderError::FileTooSmall { expected: 64, actual: 10 } => (),
+    ///     _ => panic!("Expected FileTooSmall"),
+    /// }
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, LoaderError> {
         if bytes.len() < 64 {
             return Err(LoaderError::FileTooSmall {

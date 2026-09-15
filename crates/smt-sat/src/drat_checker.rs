@@ -27,6 +27,14 @@ pub struct DratChecker {
 
 impl DratChecker {
     /// Creates a checker initialized with the original problem clauses.
+    /// Creates a new standalone DRAT checker initialized with the original problem clauses.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_sat::{DratChecker, Var};
+    /// let v = Var(0);
+    /// let checker = DratChecker::new(vec![vec![v.to_lit()]]);
+    /// ```
     pub fn new(original_clauses: Vec<Vec<Lit>>) -> Self {
         Self {
             clauses: original_clauses,
@@ -34,6 +42,16 @@ impl DratChecker {
     }
 
     /// Verifies a DRAT proof certificate text.
+    /// Verifies a DRAT proof certificate string using Reverse Unit Propagation (RUP).
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_sat::{DratChecker, DratVerificationResult, Var};
+    /// let v = Var(0);
+    /// let mut checker = DratChecker::new(vec![vec![v.to_lit()], vec![!v.to_lit()]]);
+    /// let res = checker.verify_proof("0\n");
+    /// assert_eq!(res, DratVerificationResult::Valid);
+    /// ```
     pub fn verify_proof(&mut self, proof_text: &str) -> DratVerificationResult {
         let mut derived_empty_clause = false;
 

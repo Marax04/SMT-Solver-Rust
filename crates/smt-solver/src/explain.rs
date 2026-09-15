@@ -130,6 +130,22 @@ impl DeobfuscationExplainer {
             }
         }
 
+        // 5. DRAT Mathematical Proof Certificate Check
+        if let Some(pc) = &artifact.proof_check {
+            out.push_str("\n5. **DRAT Proof Certificate Check**:\n");
+            if pc.is_valid {
+                out.push_str(&format!(
+                    "   - Validated independently by `{}`: {} Reverse Unit Propagation (RUP) steps verified to empty clause.\n",
+                    pc.checker_engine, pc.verified_steps_count
+                ));
+            } else {
+                out.push_str(&format!(
+                    "   - **DRAT CHECK FAILED** ({}) — {}\n",
+                    pc.checker_engine, pc.diagnostic
+                ));
+            }
+        }
+
         out
     }
 }

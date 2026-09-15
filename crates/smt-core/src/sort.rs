@@ -64,6 +64,14 @@ pub const MAX_BV_WIDTH: u32 = 65536;
 
 impl SortArena {
     /// Creates a new arena pre-populated with standard primitive sorts.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_core::sort::{Sort, SortArena};
+    /// let mut arena = SortArena::new();
+    /// let bv32 = arena.bv(32);
+    /// assert_eq!(arena.get(bv32), &Sort::BitVec(32));
+    /// ```
     pub fn new() -> Self {
         let mut arena = Self {
             sorts: Vec::with_capacity(32),

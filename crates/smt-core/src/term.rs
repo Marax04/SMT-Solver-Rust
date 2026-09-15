@@ -118,6 +118,15 @@ pub struct TermArena {
 
 impl TermArena {
     /// Initializes an arena with pre-allocated canonical `true` and `false` terms.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_core::sort::SortArena;
+    /// use smt_core::term::TermArena;
+    /// let mut sorts = SortArena::new();
+    /// let arena = TermArena::new(&mut sorts);
+    /// assert_ne!(arena.true_id, arena.false_id);
+    /// ```
     pub fn new(sorts: &mut SortArena) -> Self {
         let mut arena = Self {
             terms: Vec::with_capacity(1024),

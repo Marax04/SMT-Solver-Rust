@@ -28,6 +28,14 @@ impl Default for Context {
 
 impl Context {
     /// Creates a new fluent context.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_api::Context;
+    /// let mut ctx = Context::new();
+    /// let x = ctx.bv_var("x", 32);
+    /// assert_eq!(x.sort, ctx.sorts.bv(32));
+    /// ```
     pub fn new() -> Self {
         let mut sorts = SortArena::new();
         let terms = TermArena::new(&mut sorts);
@@ -149,6 +157,14 @@ impl Default for FluentSolver {
 
 impl FluentSolver {
     /// Creates a fluent solver.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_api::FluentSolver;
+    /// use smt_solver::engine::CheckSatResult;
+    /// let mut solver = FluentSolver::new();
+    /// assert_eq!(solver.check(), CheckSatResult::Sat);
+    /// ```
     pub fn new() -> Self {
         Self {
             inner: Solver::new(),

@@ -1,0 +1,302 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:68e2a120-d3b5-419b-88a4-5690214a1a01",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-15T15:30:00Z",
+    "tools": [
+      {
+        "vendor": "Rust Community",
+        "name": "cargo-cyclonedx / SMT-Solver-Rust SBOM Generator",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:cargo/smt-solver-workspace@1.0.0",
+      "name": "SMT-Solver-Rust",
+      "version": "1.0.0",
+      "description": "Enterprise-grade SMT Solver, Binary Deobfuscator, and Certified Proof Infrastructure",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-core@1.0.0",
+      "name": "smt-core",
+      "version": "1.0.0",
+      "description": "Core SMT AST, sort system, and term pool data structures",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-sat@1.0.0",
+      "name": "smt-sat",
+      "version": "1.0.0",
+      "description": "CDCL SAT solver engine with 2-watched literals and DRAT proof generator / checker",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-solver@1.0.0",
+      "name": "smt-solver",
+      "version": "1.0.0",
+      "description": "Symbolic lifter, x86 machine code decoder, binary loaders (ELF/PE), provenance audit, and replay engine",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-mba@1.0.0",
+      "name": "smt-mba",
+      "version": "1.0.0",
+      "description": "Mixed Boolean-Arithmetic simplification and oracle synthesis",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-parser@1.0.0",
+      "name": "smt-parser",
+      "version": "1.0.0",
+      "description": "SMT-LIB 2.6 syntax and command parser",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-theories@1.0.0",
+      "name": "smt-theories",
+      "version": "1.0.0",
+      "description": "SMT theory solvers: QF_BV (Bitblaster), QF_LRA (Simplex), QF_UF (Congruence Closure)",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-preprocess@1.0.0",
+      "name": "smt-preprocess",
+      "version": "1.0.0",
+      "description": "Formula preprocessing and simplification passes",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/smt-api@1.0.0",
+      "name": "smt-api",
+      "version": "1.0.0",
+      "description": "High-level Rust and C-compatible FFI bindings",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:cargo/smt-cli@1.0.0",
+      "name": "smt-cli",
+      "version": "1.0.0",
+      "description": "SMT-Solver-Rust enterprise command-line tool",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-bigint@0.4.6",
+      "name": "num-bigint",
+      "version": "0.4.6",
+      "description": "Big integer arithmetic library for Rust",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-rational@0.4.2",
+      "name": "num-rational",
+      "version": "0.4.2",
+      "description": "Rational numbers implementation for Rust",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/num-traits@0.2.19",
+      "name": "num-traits",
+      "version": "0.2.19",
+      "description": "Numeric traits for generic mathematics in Rust",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:cargo/smt-solver-workspace@1.0.0",
+      "dependsOn": [
+        "pkg:cargo/smt-core@1.0.0",
+        "pkg:cargo/smt-sat@1.0.0",
+        "pkg:cargo/smt-solver@1.0.0",
+        "pkg:cargo/smt-mba@1.0.0",
+        "pkg:cargo/smt-parser@1.0.0",
+        "pkg:cargo/smt-theories@1.0.0",
+        "pkg:cargo/smt-preprocess@1.0.0",
+        "pkg:cargo/smt-api@1.0.0",
+        "pkg:cargo/smt-cli@1.0.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/smt-core@1.0.0",
+      "dependsOn": [
+        "pkg:cargo/num-bigint@0.4.6",
+        "pkg:cargo/num-rational@0.4.2",
+        "pkg:cargo/num-traits@0.2.19"
+      ]
+    }
+  ]
+}

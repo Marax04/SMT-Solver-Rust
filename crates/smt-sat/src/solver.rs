@@ -54,6 +54,14 @@ impl Default for SatSolver {
 
 impl SatSolver {
     /// Creates a new SAT solver instance.
+    /// Creates a new CDCL SAT solver instance.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_sat::SatSolver;
+    /// let solver = SatSolver::new();
+    /// assert_eq!(solver.num_vars(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             arena: ClauseArena::new(),
@@ -494,6 +502,7 @@ impl SatSolver {
             match self.bcp() {
                 Err(conflict_cid) => {
                     if self.trail.decision_level() == 0 {
+                        self.proof.add_clause(&[]);
                         if !is_assumption_run {
                             self.ok = false;
                         }
@@ -519,6 +528,7 @@ impl SatSolver {
                     self.reduce_db();
 
                     if learned_lits.len() == 1 {
+                        self.proof.add_clause(&learned_lits);
                         self.trail.assign(learned_lits[0], Reason::Unit);
                         theory.assert_lit(learned_lits[0]);
                     } else {

@@ -28,7 +28,7 @@ fn test_provenance_artifact_markdown_and_json_generation() {
             dead_target: 0x401006,
         },
         confidence: ProvenanceConfidence::Proven,
-        solver_version: "0.1.0".to_string(),
+        solver_version: "1.0.0".to_string(),
         git_commit: "35b5d74".to_string(),
         backend: "smt-solver-cdcl-qf-bv".to_string(),
         random_seed: 42,
@@ -56,6 +56,7 @@ fn test_provenance_artifact_markdown_and_json_generation() {
             "and-zero-identity".to_string(),
         ],
         double_check: None,
+        proof_check: None,
     };
 
     // 1. Verify Markdown report
@@ -63,7 +64,7 @@ fn test_provenance_artifact_markdown_and_json_generation() {
     assert!(md.contains("# Deobfuscation Audit Artifact — Block 0x401000"));
     assert!(md.contains(&format!("- **Binary SHA-256**: `{}`", hash)));
     assert!(md.contains("- **Confidence**: `Proven`"));
-    assert!(md.contains("- **Solver Version**: `0.1.0`"));
+    assert!(md.contains("- **Solver Version**: `1.0.0`"));
     assert!(md.contains("- **Git Commit**: `35b5d74`"));
     assert!(md.contains("## Disassembly"));
     assert!(md.contains("xor eax, eax"));

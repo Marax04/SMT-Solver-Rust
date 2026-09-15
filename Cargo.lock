@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "smt-api"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "smt-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "smt-api",
  "smt-core",
@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "smt-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "smt-mba"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "num-bigint",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "smt-parser"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "smt-preprocess"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -484,11 +484,11 @@ dependencies = [
 
 [[package]]
 name = "smt-sat"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "smt-solver"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "iced-x86",
  "num-bigint",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "smt-theories"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "num-bigint",
  "num-rational",

@@ -26,6 +26,16 @@ pub struct DoubleCheckResult {
     pub external_solving_time_ms: u64,
 }
 
+/// Independent mathematical proof certificate check result (DRAT/RUP verification).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofCertificateCheckResult {
+    pub checker_engine: String,
+    pub is_valid: bool,
+    pub empty_clause_derived: bool,
+    pub verified_steps_count: usize,
+    pub diagnostic: String,
+}
+
 /// Confidence classification for audit provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvenanceConfidence {
@@ -71,10 +81,18 @@ pub struct BlockProvenanceArtifact {
     pub counterexample_model: Option<String>,
     pub applied_rewrites: Vec<String>,
     pub double_check: Option<DoubleCheckResult>,
+    pub proof_check: Option<ProofCertificateCheckResult>,
 }
 
 impl BlockProvenanceArtifact {
     /// Computes the SHA-256 hash of a binary buffer as a lowercase hex string.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_solver::provenance::BlockProvenanceArtifact;
+    /// let hash = BlockProvenanceArtifact::compute_sha256(b"hello world");
+    /// assert_eq!(hash.len(), 64);
+    /// ```
     pub fn compute_sha256(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
@@ -127,6 +145,7 @@ impl BlockProvenanceArtifact {
             counterexample_model: None,
             applied_rewrites: Vec::new(),
             double_check: None,
+            proof_check: None,
         }
     }
 
@@ -171,7 +190,7 @@ impl BlockProvenanceArtifact {
             self.conflicts_count, self.propagations_count
         ));
         md.push_str(&format!(
-            "- **Formula SHA-256**: `{}`\n",
+            "- **SMT Formula SHA-256**: `{}`\n",
             self.formula_sha256
         ));
         md.push_str(&format!(
@@ -195,6 +214,12 @@ impl BlockProvenanceArtifact {
             "- **Model Validated**: `{}`\n",
             self.metadata.model_validated
         ));
+        if let Some(ref pc) = self.proof_check {
+            md.push_str(&format!(
+                "- **DRAT Proof Certificate Check ({})**: `valid={}` ({} RUP steps verified) — {}\n",
+                pc.checker_engine, pc.is_valid, pc.verified_steps_count, pc.diagnostic
+            ));
+        }
         if let Some(ref dc) = self.double_check {
             md.push_str(&format!(
                 "- **External Oracle Double-Check ({})**: `{:?}` ({} ms)\n\n",
@@ -430,6 +455,7 @@ impl BlockProvenanceArtifact {
             counterexample_model: extract_str("counterexample"),
             applied_rewrites: Vec::new(),
             double_check: None,
+            proof_check: None,
         })
     }
 }

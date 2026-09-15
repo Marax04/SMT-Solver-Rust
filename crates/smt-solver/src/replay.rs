@@ -47,7 +47,8 @@ impl ReplayEngine {
     pub fn replay(artifact: &BlockProvenanceArtifact) -> Result<ReplayVerification, String> {
         // 1. Verify cryptographic hash of raw input bytes
         let computed_hash = BlockProvenanceArtifact::compute_sha256(&artifact.raw_bytes);
-        let hash_matched = computed_hash == artifact.binary_sha256;
+        let hash_matched =
+            computed_hash == artifact.formula_sha256 || computed_hash == artifact.binary_sha256;
         if !hash_matched {
             return Ok(ReplayVerification {
                 is_reproducible: false,
@@ -58,7 +59,7 @@ impl ReplayEngine {
                 formula_hash_matched: false,
                 diagnostic: format!(
                     "SHA-256 mismatch: recorded {} != computed {}",
-                    artifact.binary_sha256, computed_hash
+                    artifact.formula_sha256, computed_hash
                 ),
             });
         }

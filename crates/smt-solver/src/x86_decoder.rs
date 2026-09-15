@@ -97,6 +97,14 @@ pub struct X86Decoder;
 
 impl X86Decoder {
     /// Decodes a single instruction starting at `bytes[0]` with instruction pointer `ip`.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_solver::x86_decoder::X86Decoder;
+    /// let bytes = [0x31, 0xc0]; // xor eax, eax
+    /// let insn = X86Decoder::decode(&bytes, 0x401000).unwrap();
+    /// assert_eq!(insn.length, 2);
+    /// ```
     pub fn decode(bytes: &[u8], ip: u64) -> Result<DecodedInstruction, DecoderError> {
         if bytes.is_empty() {
             return Err(DecoderError::EmptyBuffer);

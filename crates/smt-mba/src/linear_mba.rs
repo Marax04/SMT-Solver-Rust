@@ -13,6 +13,14 @@ pub struct LinearMbaVector {
 }
 
 impl LinearMbaVector {
+    /// Creates a zero vector for linear MBA combinations.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_mba::linear_mba::LinearMbaVector;
+    /// let v = LinearMbaVector::zero();
+    /// assert_eq!(v.values[0], 0);
+    /// ```
     pub fn zero() -> Self {
         Self { values: [0; 16] }
     }

@@ -22,6 +22,16 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     /// Creates a new parser pre-loaded with core types.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_core::sort::SortArena;
+    /// use smt_core::term::TermArena;
+    /// use smt_parser::Parser;
+    /// let mut sorts = SortArena::new();
+    /// let mut terms = TermArena::new(&mut sorts);
+    /// let parser = Parser::new(&mut sorts, &mut terms);
+    /// ```
     pub fn new(sorts: &'a mut SortArena, terms: &'a mut TermArena) -> Self {
         let mut sort_env = HashMap::new();
         sort_env.insert("Bool".to_string(), sorts.bool_sort);
@@ -39,6 +49,18 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an entire SMT-LIB2 script string.
+    ///
+    /// # Example
+    /// ```rust
+    /// use smt_core::sort::SortArena;
+    /// use smt_core::term::TermArena;
+    /// use smt_parser::Parser;
+    /// let mut sorts = SortArena::new();
+    /// let mut terms = TermArena::new(&mut sorts);
+    /// let mut parser = Parser::new(&mut sorts, &mut terms);
+    /// let cmds = parser.parse_script("(check-sat)").unwrap();
+    /// assert_eq!(cmds.len(), 1);
+    /// ```
     pub fn parse_script(&mut self, input: &str) -> Result<Vec<Command>, SmtError> {
         let sexprs = parse_sexprs(input)?;
         let mut commands = Vec::with_capacity(sexprs.len());
