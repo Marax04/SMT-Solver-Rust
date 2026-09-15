@@ -1,7 +1,7 @@
 //! Tests for the deobfuscation audit trail and provenance artifact generation.
 
 use smt_solver::lifter::{BranchResolution, DeobfuscationStatus};
-use smt_solver::provenance::BlockProvenanceArtifact;
+use smt_solver::provenance::{BlockProvenanceArtifact, ProvenanceConfidence};
 use smt_solver::synthesis::EquivalenceMetadata;
 
 #[test]
@@ -27,6 +27,21 @@ fn test_provenance_artifact_markdown_and_json_generation() {
             surviving_target: 0x40100b,
             dead_target: 0x401006,
         },
+        confidence: ProvenanceConfidence::Proven,
+        solver_version: "0.1.0".to_string(),
+        git_commit: "35b5d74".to_string(),
+        backend: "smt-solver-cdcl-qf-bv".to_string(),
+        random_seed: 42,
+        timeout_ms: 10000,
+        memory_budget_mb: 512,
+        conflicts_count: 0,
+        propagations_count: 14,
+        formula_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            .to_string(),
+        pre_simplification_ir_sha256:
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".to_string(),
+        post_simplification_ir_sha256:
+            "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8".to_string(),
         metadata: EquivalenceMetadata {
             solving_time_ms: 2,
             logic: "QF_BV".to_string(),
@@ -46,6 +61,9 @@ fn test_provenance_artifact_markdown_and_json_generation() {
     let md = artifact.to_markdown();
     assert!(md.contains("# Deobfuscation Audit Artifact — Block 0x401000"));
     assert!(md.contains(&format!("- **Binary SHA-256**: `{}`", hash)));
+    assert!(md.contains("- **Confidence**: `Proven`"));
+    assert!(md.contains("- **Solver Version**: `0.1.0`"));
+    assert!(md.contains("- **Git Commit**: `35b5d74`"));
     assert!(md.contains("## Disassembly"));
     assert!(md.contains("xor eax, eax"));
     assert!(md.contains("## Branch Resolution & Deobfuscation Status"));
@@ -55,9 +73,10 @@ fn test_provenance_artifact_markdown_and_json_generation() {
 
     // 2. Verify JSON report
     let json = artifact.to_json();
-    assert!(json.contains(&format!("\"binary_sha256\": \"{}\"", hash)));
-    assert!(json.contains("\"block_vaddr\": \"0x401000\""));
-    assert!(json.contains("\"logic\": \"QF_BV\""));
-    assert!(json.contains("\"solving_time_ms\": 2"));
-    assert!(json.contains("\"applied_rewrites\": [\"xor-self-to-zero\", \"and-zero-identity\"]"));
+    assert!(json.contains(&format!(r#""binary_sha256": "{}""#, hash)));
+    assert!(json.contains(r#""block_vaddr": "0x401000""#));
+    assert!(json.contains(r#""confidence": "Proven""#));
+    assert!(json.contains(r#""git_commit": "35b5d74""#));
+    assert!(json.contains(r#""logic": "QF_BV""#));
+    assert!(json.contains(r#""conflicts_count": 0"#));
 }

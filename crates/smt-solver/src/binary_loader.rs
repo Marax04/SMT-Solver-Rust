@@ -847,6 +847,23 @@ pub struct PeRelocationBlock {
     pub entries: Vec<(u8, u16)>, // (type, offset within page)
 }
 
+/// An exported symbol from a PE32+ module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeExport {
+    pub name: Option<String>,
+    pub ordinal: u32,
+    pub rva: u32,
+    pub forwarder: Option<String>,
+}
+
+/// Unwind / exception handling function table entry (.pdata) for x86-64.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeRuntimeFunction {
+    pub begin_address: u32,
+    pub end_address: u32,
+    pub unwind_info_address: u32,
+}
+
 /// PE TLS Directory metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeTlsDirectory {
@@ -856,6 +873,7 @@ pub struct PeTlsDirectory {
     pub address_of_callbacks: u64,
     pub size_of_zero_fill: u32,
     pub characteristics: u32,
+    pub callbacks: Vec<u64>,
 }
 
 /// Parsed PE32+ (64-bit) binary structure.
@@ -868,6 +886,9 @@ pub struct Pe64File {
     pub sections: Vec<PeSection>,
     pub data_directories: Vec<PeDataDirectory>,
     pub imports: Vec<PeImport>,
+    pub delay_imports: Vec<PeImport>,
+    pub exports: Vec<PeExport>,
+    pub exception_directory: Vec<PeRuntimeFunction>,
     pub relocations: Vec<PeRelocationBlock>,
     pub tls: Option<PeTlsDirectory>,
 }
@@ -1257,6 +1278,282 @@ impl Pe64File {
             }
         }
 
+        // Parse Export Directory (Data Directory 0: IMAGE_DIRECTORY_ENTRY_EXPORT)
+        let mut exports = Vec::new();
+        if !data_directories.is_empty()
+            && data_directories[0].size >= 40
+            && data_directories[0].virtual_address > 0
+        {
+            let exp_dir_rva = data_directories[0].virtual_address;
+            let exp_dir_size = data_directories[0].size;
+            if let Some(exp_off) = rva_to_off(exp_dir_rva) {
+                if exp_off + 40 <= bytes.len() {
+                    let ordinal_base = u32::from_le_bytes([
+                        bytes[exp_off + 16],
+                        bytes[exp_off + 17],
+                        bytes[exp_off + 18],
+                        bytes[exp_off + 19],
+                    ]);
+                    let num_functions = u32::from_le_bytes([
+                        bytes[exp_off + 20],
+                        bytes[exp_off + 21],
+                        bytes[exp_off + 22],
+                        bytes[exp_off + 23],
+                    ]) as usize;
+                    let num_names = u32::from_le_bytes([
+                        bytes[exp_off + 24],
+                        bytes[exp_off + 25],
+                        bytes[exp_off + 26],
+                        bytes[exp_off + 27],
+                    ]) as usize;
+                    let addr_functions = u32::from_le_bytes([
+                        bytes[exp_off + 28],
+                        bytes[exp_off + 29],
+                        bytes[exp_off + 30],
+                        bytes[exp_off + 31],
+                    ]);
+                    let addr_names = u32::from_le_bytes([
+                        bytes[exp_off + 32],
+                        bytes[exp_off + 33],
+                        bytes[exp_off + 34],
+                        bytes[exp_off + 35],
+                    ]);
+                    let addr_name_ordinals = u32::from_le_bytes([
+                        bytes[exp_off + 36],
+                        bytes[exp_off + 37],
+                        bytes[exp_off + 38],
+                        bytes[exp_off + 39],
+                    ]);
+
+                    let capped_funcs = num_functions.min(4096);
+                    let capped_names = num_names.min(4096);
+
+                    // Build mapping from function index to name
+                    let mut name_map: std::collections::HashMap<u16, String> =
+                        std::collections::HashMap::new();
+                    if let (Some(names_off), Some(ordinals_off)) =
+                        (rva_to_off(addr_names), rva_to_off(addr_name_ordinals))
+                    {
+                        for i in 0..capped_names {
+                            let n_ptr_off = names_off + i * 4;
+                            let ord_ptr_off = ordinals_off + i * 2;
+                            if n_ptr_off + 4 <= bytes.len() && ord_ptr_off + 2 <= bytes.len() {
+                                let name_rva = u32::from_le_bytes([
+                                    bytes[n_ptr_off],
+                                    bytes[n_ptr_off + 1],
+                                    bytes[n_ptr_off + 2],
+                                    bytes[n_ptr_off + 3],
+                                ]);
+                                let func_idx = u16::from_le_bytes([
+                                    bytes[ord_ptr_off],
+                                    bytes[ord_ptr_off + 1],
+                                ]);
+                                if let Some(n_off) = rva_to_off(name_rva) {
+                                    let mut end = n_off;
+                                    while end < bytes.len() && bytes[end] != 0 && end - n_off < 256
+                                    {
+                                        end += 1;
+                                    }
+                                    if end < bytes.len() {
+                                        let name =
+                                            String::from_utf8_lossy(&bytes[n_off..end]).to_string();
+                                        name_map.insert(func_idx, name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Parse function entries
+                    if let Some(func_table_off) = rva_to_off(addr_functions) {
+                        for i in 0..capped_funcs {
+                            let f_off = func_table_off + i * 4;
+                            if f_off + 4 <= bytes.len() {
+                                let func_rva = u32::from_le_bytes([
+                                    bytes[f_off],
+                                    bytes[f_off + 1],
+                                    bytes[f_off + 2],
+                                    bytes[f_off + 3],
+                                ]);
+                                if func_rva > 0 {
+                                    let is_forwarder = func_rva >= exp_dir_rva
+                                        && func_rva < exp_dir_rva.saturating_add(exp_dir_size);
+                                    let forwarder = if is_forwarder {
+                                        rva_to_off(func_rva).map(|fwd_off| {
+                                            let mut end = fwd_off;
+                                            while end < bytes.len()
+                                                && bytes[end] != 0
+                                                && end - fwd_off < 256
+                                            {
+                                                end += 1;
+                                            }
+                                            String::from_utf8_lossy(&bytes[fwd_off..end])
+                                                .to_string()
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    let name = name_map.get(&(i as u16)).cloned();
+                                    exports.push(PeExport {
+                                        name,
+                                        ordinal: ordinal_base.wrapping_add(i as u32),
+                                        rva: func_rva,
+                                        forwarder,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Parse Exception Directory (Data Directory 3: IMAGE_DIRECTORY_ENTRY_EXCEPTION, .pdata)
+        let mut exception_directory = Vec::new();
+        if data_directories.len() > 3
+            && data_directories[3].size >= 12
+            && data_directories[3].virtual_address > 0
+        {
+            if let Some(pdata_off) = rva_to_off(data_directories[3].virtual_address) {
+                let entry_count = (data_directories[3].size as usize / 12).min(65536);
+                for i in 0..entry_count {
+                    let cur = pdata_off + i * 12;
+                    if cur + 12 <= bytes.len() {
+                        let begin_address = u32::from_le_bytes([
+                            bytes[cur],
+                            bytes[cur + 1],
+                            bytes[cur + 2],
+                            bytes[cur + 3],
+                        ]);
+                        let end_address = u32::from_le_bytes([
+                            bytes[cur + 4],
+                            bytes[cur + 5],
+                            bytes[cur + 6],
+                            bytes[cur + 7],
+                        ]);
+                        let unwind_info_address = u32::from_le_bytes([
+                            bytes[cur + 8],
+                            bytes[cur + 9],
+                            bytes[cur + 10],
+                            bytes[cur + 11],
+                        ]);
+                        exception_directory.push(PeRuntimeFunction {
+                            begin_address,
+                            end_address,
+                            unwind_info_address,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Parse Delay Import Directory (Data Directory 13: IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT)
+        let mut delay_imports = Vec::new();
+        if data_directories.len() > 13
+            && data_directories[13].size >= 32
+            && data_directories[13].virtual_address > 0
+        {
+            if let Some(mut cur_off) = rva_to_off(data_directories[13].virtual_address) {
+                let mut desc_count = 0;
+                while desc_count < 512 && cur_off + 32 <= bytes.len() {
+                    let name_rva = u32::from_le_bytes([
+                        bytes[cur_off + 4],
+                        bytes[cur_off + 5],
+                        bytes[cur_off + 6],
+                        bytes[cur_off + 7],
+                    ]);
+                    let iat_rva = u32::from_le_bytes([
+                        bytes[cur_off + 12],
+                        bytes[cur_off + 13],
+                        bytes[cur_off + 14],
+                        bytes[cur_off + 15],
+                    ]);
+                    let int_rva = u32::from_le_bytes([
+                        bytes[cur_off + 16],
+                        bytes[cur_off + 17],
+                        bytes[cur_off + 18],
+                        bytes[cur_off + 19],
+                    ]);
+
+                    if name_rva == 0 && int_rva == 0 && iat_rva == 0 {
+                        break;
+                    }
+
+                    if let Some(name_file_off) = rva_to_off(name_rva) {
+                        let mut name_end = name_file_off;
+                        while name_end < bytes.len()
+                            && bytes[name_end] != 0
+                            && name_end - name_file_off < 256
+                        {
+                            name_end += 1;
+                        }
+                        let dll_name =
+                            String::from_utf8_lossy(&bytes[name_file_off..name_end]).to_string();
+
+                        let lookup_rva = if int_rva > 0 { int_rva } else { iat_rva };
+                        let mut functions = Vec::new();
+                        if let Some(mut thunk_off) = rva_to_off(lookup_rva) {
+                            let mut func_count = 0;
+                            while func_count < 4096 && thunk_off + 8 <= bytes.len() {
+                                let thunk_val = u64::from_le_bytes([
+                                    bytes[thunk_off],
+                                    bytes[thunk_off + 1],
+                                    bytes[thunk_off + 2],
+                                    bytes[thunk_off + 3],
+                                    bytes[thunk_off + 4],
+                                    bytes[thunk_off + 5],
+                                    bytes[thunk_off + 6],
+                                    bytes[thunk_off + 7],
+                                ]);
+                                if thunk_val == 0 {
+                                    break;
+                                }
+
+                                if (thunk_val & 0x8000_0000_0000_0000) != 0 {
+                                    let ordinal = (thunk_val & 0xffff) as u16;
+                                    functions.push(PeImportFunction {
+                                        ordinal: Some(ordinal),
+                                        name: None,
+                                    });
+                                } else {
+                                    let hint_name_rva = (thunk_val & 0xffff_ffff) as u32;
+                                    if let Some(hn_off) = rva_to_off(hint_name_rva) {
+                                        if hn_off + 2 < bytes.len() {
+                                            let name_start = hn_off + 2;
+                                            let mut name_end = name_start;
+                                            while name_end < bytes.len()
+                                                && bytes[name_end] != 0
+                                                && name_end - name_start < 256
+                                            {
+                                                name_end += 1;
+                                            }
+                                            let fn_name = String::from_utf8_lossy(
+                                                &bytes[name_start..name_end],
+                                            )
+                                            .to_string();
+                                            functions.push(PeImportFunction {
+                                                ordinal: None,
+                                                name: Some(fn_name),
+                                            });
+                                        }
+                                    }
+                                }
+                                thunk_off += 8;
+                                func_count += 1;
+                            }
+                        }
+                        delay_imports.push(PeImport {
+                            dll_name,
+                            functions,
+                        });
+                    }
+
+                    cur_off += 32;
+                    desc_count += 1;
+                }
+            }
+        }
+
         // Parse TLS Directory (Data Directory 9: IMAGE_DIRECTORY_ENTRY_TLS)
         let tls = if data_directories.len() > 9
             && data_directories[9].size >= 40
@@ -1317,6 +1614,32 @@ impl Pe64File {
                         bytes[t_off + 39],
                     ]);
 
+                    let mut callbacks = Vec::new();
+                    if cb_addr > 0 {
+                        let cb_rva = (cb_addr.saturating_sub(image_base)) as u32;
+                        if let Some(mut cb_off) = rva_to_off(cb_rva) {
+                            let mut cb_count = 0;
+                            while cb_count < 64 && cb_off + 8 <= bytes.len() {
+                                let ptr = u64::from_le_bytes([
+                                    bytes[cb_off],
+                                    bytes[cb_off + 1],
+                                    bytes[cb_off + 2],
+                                    bytes[cb_off + 3],
+                                    bytes[cb_off + 4],
+                                    bytes[cb_off + 5],
+                                    bytes[cb_off + 6],
+                                    bytes[cb_off + 7],
+                                ]);
+                                if ptr == 0 {
+                                    break;
+                                }
+                                callbacks.push(ptr);
+                                cb_off += 8;
+                                cb_count += 1;
+                            }
+                        }
+                    }
+
                     Some(PeTlsDirectory {
                         start_address_of_raw_data: start_raw,
                         end_address_of_raw_data: end_raw,
@@ -1324,6 +1647,7 @@ impl Pe64File {
                         address_of_callbacks: cb_addr,
                         size_of_zero_fill: zero_fill,
                         characteristics: chars,
+                        callbacks,
                     })
                 } else {
                     None
@@ -1343,6 +1667,9 @@ impl Pe64File {
             sections,
             data_directories,
             imports,
+            delay_imports,
+            exports,
+            exception_directory,
             relocations,
             tls,
         })

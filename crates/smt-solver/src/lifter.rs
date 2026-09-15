@@ -231,6 +231,27 @@ impl BasicBlock {
     }
 }
 
+/// Memory state classification for sound binary execution and fault detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryStateKind {
+    MappedConcrete,
+    MappedZero,
+    MappedSymbolic,
+    UnmappedFault,
+    PermissionFault,
+    BudgetExhausted,
+    Unknown,
+}
+
+/// Execution policy defining how memory access violations are handled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryPolicy {
+    /// Real-machine emulation: accesses outside mapped segments or permission violations trigger faults.
+    StrictFault,
+    /// Symbolic exploration: unmapped reads introduce fresh unconstrained symbolic variables (over-approximation).
+    PermissiveOverApproximation,
+}
+
 /// Outcome of analyzing and pruning a conditional branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchResolution {
@@ -238,6 +259,10 @@ pub enum BranchResolution {
     Deterministic(u64),
     /// The branch is genuinely dynamic depending on symbolic inputs.
     Conditional { true_target: u64, false_target: u64 },
+    /// Memory fault detected during execution (unmapped or permission violation).
+    MemoryFault(MemoryStateKind, u64),
+    /// Symbolic execution budget (e.g. store chain depth) exhausted.
+    BudgetExhausted,
     /// Both branches are unsatisfiable under current path constraints.
     Unreachable,
 }
@@ -245,13 +270,19 @@ pub enum BranchResolution {
 /// Uncertainty-aware classification of a deobfuscated branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeobfuscationStatus {
-    /// Formally proven invariant by SMT refutation (one branch is UNSAT).
+    /// Formally proven invariant by SMT refutation (one branch is UNSAT) with no unmapped over-approximations.
     ProvenInvariant {
         surviving_target: u64,
         dead_target: u64,
     },
     /// Formally proven dynamic branch (both paths SAT with concrete models).
     ProvenDynamic { true_target: u64, false_target: u64 },
+    /// Branch simplified under permissive memory over-approximation (cannot be certified as strict proof).
+    OverApproximated,
+    /// Memory violation or access fault detected during path analysis.
+    FaultDetected,
+    /// Path exploration resource budget exhausted.
+    ResourceExhausted,
     /// Inconsistent path constraints (both paths UNSAT).
     UnreachablePath,
 }
@@ -418,7 +449,13 @@ struct SavedScope {
     symbolic_memory: Vec<(TermId, TermId)>,
     read_only_ranges: Vec<(u64, u64)>,
     bss_ranges: Vec<(u64, u64)>,
+    mapped_ranges: Vec<(u64, u64)>,
     security_violations: Vec<String>,
+    had_over_approximation: bool,
+    had_unmapped_fault: bool,
+    had_permission_fault: bool,
+    had_budget_exhaustion: bool,
+    fault_address: Option<u64>,
 }
 
 /// Symbolic lifter and path condition analyzer.
@@ -434,11 +471,19 @@ pub struct Lifter {
     memory: HashMap<u64, TermId>,
     stack_memory: HashMap<i64, TermId>,
     named_memory: HashMap<(String, i64), TermId>,
-    symbolic_memory: Vec<(TermId, TermId)>,
+    pub symbolic_memory: Vec<(TermId, TermId)>,
     scope_stack: Vec<SavedScope>,
     pub read_only_ranges: Vec<(u64, u64)>,
     pub bss_ranges: Vec<(u64, u64)>,
+    pub mapped_ranges: Vec<(u64, u64)>,
     pub security_violations: Vec<String>,
+    pub memory_policy: MemoryPolicy,
+    pub had_over_approximation: bool,
+    pub had_unmapped_fault: bool,
+    pub had_permission_fault: bool,
+    pub had_budget_exhaustion: bool,
+    pub fault_address: Option<u64>,
+    pub max_store_chain_depth: usize,
 }
 
 impl Default for Lifter {
@@ -470,7 +515,15 @@ impl Lifter {
             scope_stack: Vec::new(),
             read_only_ranges: Vec::new(),
             bss_ranges: Vec::new(),
+            mapped_ranges: Vec::new(),
             security_violations: Vec::new(),
+            memory_policy: MemoryPolicy::StrictFault,
+            had_over_approximation: false,
+            had_unmapped_fault: false,
+            had_permission_fault: false,
+            had_budget_exhaustion: false,
+            fault_address: None,
+            max_store_chain_depth: 64,
         }
     }
 
@@ -489,7 +542,13 @@ impl Lifter {
             symbolic_memory: self.symbolic_memory.clone(),
             read_only_ranges: self.read_only_ranges.clone(),
             bss_ranges: self.bss_ranges.clone(),
+            mapped_ranges: self.mapped_ranges.clone(),
             security_violations: self.security_violations.clone(),
+            had_over_approximation: self.had_over_approximation,
+            had_unmapped_fault: self.had_unmapped_fault,
+            had_permission_fault: self.had_permission_fault,
+            had_budget_exhaustion: self.had_budget_exhaustion,
+            fault_address: self.fault_address,
         });
     }
 
@@ -508,10 +567,27 @@ impl Lifter {
             self.symbolic_memory = saved.symbolic_memory;
             self.read_only_ranges = saved.read_only_ranges;
             self.bss_ranges = saved.bss_ranges;
+            self.mapped_ranges = saved.mapped_ranges;
             self.security_violations = saved.security_violations;
+            self.had_over_approximation = saved.had_over_approximation;
+            self.had_unmapped_fault = saved.had_unmapped_fault;
+            self.had_permission_fault = saved.had_permission_fault;
+            self.had_budget_exhaustion = saved.had_budget_exhaustion;
+            self.fault_address = saved.fault_address;
             true
         } else {
             false
+        }
+    }
+
+    /// Checks if a physical address is within declared mapped memory ranges.
+    pub fn is_mapped(&self, addr: u64) -> bool {
+        if self.mapped_ranges.is_empty() {
+            true
+        } else {
+            self.mapped_ranges
+                .iter()
+                .any(|&(s, e)| addr >= s && addr < e)
         }
     }
 
@@ -780,6 +856,25 @@ impl Lifter {
         match addr {
             MemoryAddress::Physical(phys) => {
                 let target = phys.wrapping_add(byte_offset as u64);
+                if !self.is_mapped(target) {
+                    match self.memory_policy {
+                        MemoryPolicy::StrictFault => {
+                            self.had_unmapped_fault = true;
+                            if self.fault_address.is_none() {
+                                self.fault_address = Some(target);
+                            }
+                            self.security_violations
+                                .push(format!("Unmapped read fault at {:#x}", target));
+                            let sort8 = self.sorts.bv(8);
+                            return self
+                                .terms
+                                .var(format!("fault_unmapped_{:x}", target), sort8);
+                        }
+                        MemoryPolicy::PermissiveOverApproximation => {
+                            self.had_over_approximation = true;
+                        }
+                    }
+                }
                 let mut res = if let Some(&t) = self.memory.get(&target) {
                     t
                 } else if self.is_in_bss(target) {
@@ -796,17 +891,14 @@ impl Lifter {
                     let target_term = self.terms.bv_const(target.into(), 64, &mut self.sorts);
                     for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
                         if *s_addr == target_term {
-                            // MUST-ALIAS: syntactic or constant exact match
                             res = *s_val;
                             break;
                         }
                         if let Some(c_s_addr) = self.eval_concrete_u64(*s_addr) {
                             if c_s_addr != target {
-                                // MUST-NOT-ALIAS: proven distinct concrete addresses
                                 continue;
                             }
                         }
-                        // MAY-ALIAS: cannot rule out alias statically, generate SMT ITE term
                         let eq = self.terms.eq(*s_addr, target_term, &self.sorts);
                         res = self.terms.ite(eq, *s_val, res);
                     }
@@ -848,11 +940,26 @@ impl Lifter {
                 } else {
                     *base_term
                 };
+                if let Some(concrete_addr) = self.eval_concrete_u64(byte_addr) {
+                    return self.read_byte_at(&MemoryAddress::Physical(concrete_addr), 0);
+                }
+                match self.memory_policy {
+                    MemoryPolicy::StrictFault => {
+                        if !self.mapped_ranges.is_empty() {
+                            self.had_unmapped_fault = true;
+                            if self.fault_address.is_none() {
+                                self.fault_address = Some(0);
+                            }
+                        }
+                    }
+                    MemoryPolicy::PermissiveOverApproximation => {
+                        self.had_over_approximation = true;
+                    }
+                }
                 let sort8 = self.sorts.bv(8);
                 let mut res = self.terms.var(format!("uninit_sym_{:?}", byte_addr), sort8);
                 for (s_addr, s_val) in self.symbolic_memory.iter().rev() {
                     if *s_addr == byte_addr {
-                        // MUST-ALIAS: exact term identity
                         res = *s_val;
                         break;
                     }
@@ -861,11 +968,9 @@ impl Lifter {
                         self.eval_concrete_u64(byte_addr),
                     ) {
                         if c1 != c2 {
-                            // MUST-NOT-ALIAS: proven distinct concrete addresses
                             continue;
                         }
                     }
-                    // MAY-ALIAS: fold into SMT ITE expression
                     let eq = self.terms.eq(*s_addr, byte_addr, &self.sorts);
                     res = self.terms.ite(eq, *s_val, res);
                 }
@@ -878,9 +983,32 @@ impl Lifter {
         match addr {
             MemoryAddress::Physical(phys) => {
                 let target = phys.wrapping_add(byte_offset as u64);
+                if !self.is_mapped(target) {
+                    match self.memory_policy {
+                        MemoryPolicy::StrictFault => {
+                            self.had_unmapped_fault = true;
+                            if self.fault_address.is_none() {
+                                self.fault_address = Some(target);
+                            }
+                            self.security_violations
+                                .push(format!("Unmapped write fault at {:#x}", target));
+                            return;
+                        }
+                        MemoryPolicy::PermissiveOverApproximation => {
+                            self.had_over_approximation = true;
+                        }
+                    }
+                }
                 if self.is_read_only(target) {
+                    self.had_permission_fault = true;
+                    if self.fault_address.is_none() {
+                        self.fault_address = Some(target);
+                    }
                     self.security_violations
                         .push(format!("Write to read-only address {:#x}", target));
+                    if self.memory_policy == MemoryPolicy::StrictFault {
+                        return;
+                    }
                 }
                 self.memory.insert(target, val);
             }
@@ -903,6 +1031,26 @@ impl Lifter {
                 } else {
                     *base_term
                 };
+                if let Some(concrete_addr) = self.eval_concrete_u64(byte_addr) {
+                    self.write_byte_at(&MemoryAddress::Physical(concrete_addr), 0, val);
+                    return;
+                }
+                if let Some(pos) = self
+                    .symbolic_memory
+                    .iter()
+                    .rposition(|(a, _)| *a == byte_addr)
+                {
+                    self.symbolic_memory[pos].1 = val;
+                    return;
+                }
+                if self.symbolic_memory.len() >= self.max_store_chain_depth {
+                    self.had_budget_exhaustion = true;
+                    self.security_violations.push(format!(
+                        "Symbolic store chain exceeded maximum depth limit ({})",
+                        self.max_store_chain_depth
+                    ));
+                    return;
+                }
                 self.symbolic_memory.push((byte_addr, val));
             }
         }
@@ -949,6 +1097,10 @@ impl Lifter {
         };
         let addr = self.resolve_address(&base, &index, disp);
         let byte_count = (width / 8).max(1) as usize;
+        if byte_count == 1 && width == 8 {
+            self.write_byte_at(&addr, 0, val);
+            return;
+        }
         for i in 0..byte_count {
             let low = (i * 8) as u32;
             let high = low + 7;
@@ -1361,6 +1513,18 @@ impl Lifter {
         terminator: &IrInstruction,
         path_constraints: &[TermId],
     ) -> BranchResolution {
+        if self.had_unmapped_fault {
+            let addr = self.fault_address.unwrap_or(0);
+            return BranchResolution::MemoryFault(MemoryStateKind::UnmappedFault, addr);
+        }
+        if self.had_permission_fault {
+            let addr = self.fault_address.unwrap_or(0);
+            return BranchResolution::MemoryFault(MemoryStateKind::PermissionFault, addr);
+        }
+        if self.had_budget_exhaustion {
+            return BranchResolution::BudgetExhausted;
+        }
+
         match terminator {
             IrInstruction::Jmp { target } => BranchResolution::Deterministic(*target),
             IrInstruction::Jcc {
@@ -1378,7 +1542,6 @@ impl Lifter {
                     }
                 };
 
-                // Check satisfiability of True branch: path_constraints && cond_term
                 let true_sat = {
                     let mut solver = Solver::new();
                     solver.sorts = self.sorts.clone();
@@ -1395,7 +1558,6 @@ impl Lifter {
                     solver.check_sat() == CheckSatResult::Sat
                 };
 
-                // Check satisfiability of False branch: path_constraints && !cond_term
                 let not_cond = self.terms.not(cond_term);
                 let false_sat = {
                     let mut solver = Solver::new();
@@ -1433,6 +1595,36 @@ impl Lifter {
         terminator: &IrInstruction,
         path_constraints: &[TermId],
     ) -> ProofCarryingResolution {
+        if self.had_unmapped_fault {
+            let addr = self.fault_address.unwrap_or(0);
+            return ProofCarryingResolution {
+                status: DeobfuscationStatus::FaultDetected,
+                resolution: BranchResolution::MemoryFault(MemoryStateKind::UnmappedFault, addr),
+                certificate: format!("Memory fault: unmapped memory access at {:#x}", addr),
+                true_branch_model: None,
+                false_branch_model: None,
+            };
+        }
+        if self.had_permission_fault {
+            let addr = self.fault_address.unwrap_or(0);
+            return ProofCarryingResolution {
+                status: DeobfuscationStatus::FaultDetected,
+                resolution: BranchResolution::MemoryFault(MemoryStateKind::PermissionFault, addr),
+                certificate: format!("Memory permission violation at {:#x}", addr),
+                true_branch_model: None,
+                false_branch_model: None,
+            };
+        }
+        if self.had_budget_exhaustion {
+            return ProofCarryingResolution {
+                status: DeobfuscationStatus::ResourceExhausted,
+                resolution: BranchResolution::BudgetExhausted,
+                certificate: "Symbolic store-chain budget exhausted".to_string(),
+                true_branch_model: None,
+                false_branch_model: None,
+            };
+        }
+
         match terminator {
             IrInstruction::Jmp { target } => ProofCarryingResolution {
                 status: DeobfuscationStatus::ProvenInvariant {
@@ -1506,32 +1698,46 @@ impl Lifter {
                 };
 
                 match (true_res, false_res) {
-                    (CheckSatResult::Sat, CheckSatResult::Unsat) => ProofCarryingResolution {
-                        status: DeobfuscationStatus::ProvenInvariant {
-                            surviving_target: *target_true,
-                            dead_target: *target_false,
-                        },
-                        resolution: BranchResolution::Deterministic(*target_true),
-                        certificate: format!(
-                            "SMT-certified UNSAT refutation of false branch ({:#x})",
-                            target_false
-                        ),
-                        true_branch_model: true_model,
-                        false_branch_model: None,
-                    },
-                    (CheckSatResult::Unsat, CheckSatResult::Sat) => ProofCarryingResolution {
-                        status: DeobfuscationStatus::ProvenInvariant {
-                            surviving_target: *target_false,
-                            dead_target: *target_true,
-                        },
-                        resolution: BranchResolution::Deterministic(*target_false),
-                        certificate: format!(
-                            "SMT-certified UNSAT refutation of true branch ({:#x})",
-                            target_true
-                        ),
-                        true_branch_model: None,
-                        false_branch_model: false_model,
-                    },
+                    (CheckSatResult::Sat, CheckSatResult::Unsat) => {
+                        let status = if self.had_over_approximation {
+                            DeobfuscationStatus::OverApproximated
+                        } else {
+                            DeobfuscationStatus::ProvenInvariant {
+                                surviving_target: *target_true,
+                                dead_target: *target_false,
+                            }
+                        };
+                        ProofCarryingResolution {
+                            status,
+                            resolution: BranchResolution::Deterministic(*target_true),
+                            certificate: format!(
+                                "SMT-certified UNSAT refutation of false branch ({:#x})",
+                                target_false
+                            ),
+                            true_branch_model: true_model,
+                            false_branch_model: None,
+                        }
+                    }
+                    (CheckSatResult::Unsat, CheckSatResult::Sat) => {
+                        let status = if self.had_over_approximation {
+                            DeobfuscationStatus::OverApproximated
+                        } else {
+                            DeobfuscationStatus::ProvenInvariant {
+                                surviving_target: *target_false,
+                                dead_target: *target_true,
+                            }
+                        };
+                        ProofCarryingResolution {
+                            status,
+                            resolution: BranchResolution::Deterministic(*target_false),
+                            certificate: format!(
+                                "SMT-certified UNSAT refutation of true branch ({:#x})",
+                                target_true
+                            ),
+                            true_branch_model: None,
+                            false_branch_model: false_model,
+                        }
+                    }
                     (CheckSatResult::Sat, CheckSatResult::Sat) => ProofCarryingResolution {
                         status: DeobfuscationStatus::ProvenDynamic {
                             true_target: *target_true,
@@ -1549,8 +1755,9 @@ impl Lifter {
                     _ => ProofCarryingResolution {
                         status: DeobfuscationStatus::UnreachablePath,
                         resolution: BranchResolution::Unreachable,
-                        certificate: "Contradiction: both branches UNSAT under path constraints"
-                            .to_string(),
+                        certificate:
+                            "Both true and false paths are UNSAT under current constraints"
+                                .to_string(),
                         true_branch_model: None,
                         false_branch_model: None,
                     },
@@ -1559,7 +1766,7 @@ impl Lifter {
             _ => ProofCarryingResolution {
                 status: DeobfuscationStatus::UnreachablePath,
                 resolution: BranchResolution::Unreachable,
-                certificate: "Unsupported terminator instruction".to_string(),
+                certificate: "Terminator is not a supported branch instruction".to_string(),
                 true_branch_model: None,
                 false_branch_model: None,
             },

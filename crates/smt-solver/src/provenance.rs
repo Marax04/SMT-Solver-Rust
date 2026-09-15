@@ -9,6 +9,23 @@ use crate::lifter::{BranchResolution, DeobfuscationStatus};
 use crate::synthesis::EquivalenceMetadata;
 use sha2::{Digest, Sha256};
 
+/// Confidence classification for audit provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvenanceConfidence {
+    /// Formally proven invariant by SMT refutation with zero over-approximations.
+    Proven,
+    /// Result derived under permissive memory or external over-approximation.
+    OverApproximated,
+    /// Pattern or algebraic heuristic without complete refutation.
+    Heuristic,
+    /// Memory violation or execution fault detected.
+    FaultDetected,
+    /// Resource budget exhausted (e.g. store chain or timeout).
+    ResourceExhausted,
+    /// Unknown / inconclusive.
+    Unknown,
+}
+
 /// Formally verified provenance artifact recording a deobfuscated block and branch resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockProvenanceArtifact {
@@ -21,6 +38,18 @@ pub struct BlockProvenanceArtifact {
     pub simplified_condition_term: String,
     pub resolution: BranchResolution,
     pub deobfuscation_status: DeobfuscationStatus,
+    pub confidence: ProvenanceConfidence,
+    pub solver_version: String,
+    pub git_commit: String,
+    pub backend: String,
+    pub random_seed: u64,
+    pub timeout_ms: u64,
+    pub memory_budget_mb: u64,
+    pub conflicts_count: u64,
+    pub propagations_count: u64,
+    pub formula_sha256: String,
+    pub pre_simplification_ir_sha256: String,
+    pub post_simplification_ir_sha256: String,
     pub metadata: EquivalenceMetadata,
     pub counterexample_model: Option<String>,
     pub applied_rewrites: Vec<String>,
@@ -42,6 +71,7 @@ impl BlockProvenanceArtifact {
             "# Deobfuscation Audit Artifact — Block {:#x}\n\n",
             self.block_vaddr
         ));
+        md.push_str(&format!("- **Confidence**: `{:?}`\n", self.confidence));
         md.push_str(&format!("- **Binary SHA-256**: `{}`\n", self.binary_sha256));
         md.push_str(&format!(
             "- **Block Virtual Address**: `{:#x}`\n",
@@ -51,6 +81,33 @@ impl BlockProvenanceArtifact {
             "- **Raw Bytes ({} bytes)**: `{:02x?}`\n",
             self.raw_bytes.len(),
             self.raw_bytes
+        ));
+        md.push_str(&format!(
+            "- **Solver Version**: `{}`\n",
+            self.solver_version
+        ));
+        md.push_str(&format!("- **Git Commit**: `{}`\n", self.git_commit));
+        md.push_str(&format!("- **Backend Engine**: `{}`\n", self.backend));
+        md.push_str(&format!("- **Random Seed**: `{}`\n", self.random_seed));
+        md.push_str(&format!(
+            "- **Timeout / Memory Budget**: `{} ms / {} MB`\n",
+            self.timeout_ms, self.memory_budget_mb
+        ));
+        md.push_str(&format!(
+            "- **CDCL Conflicts / Propagations**: `{} / {}`\n",
+            self.conflicts_count, self.propagations_count
+        ));
+        md.push_str(&format!(
+            "- **Formula SHA-256**: `{}`\n",
+            self.formula_sha256
+        ));
+        md.push_str(&format!(
+            "- **Pre-Simplification IR SHA-256**: `{}`\n",
+            self.pre_simplification_ir_sha256
+        ));
+        md.push_str(&format!(
+            "- **Post-Simplification IR SHA-256**: `{}`\n",
+            self.post_simplification_ir_sha256
         ));
         md.push_str(&format!(
             "- **Solving Duration**: `{} ms`\n",
@@ -116,33 +173,45 @@ impl BlockProvenanceArtifact {
         let disasm_json: Vec<String> = self
             .disassembly
             .iter()
-            .map(|d| format!("\"{}\"", d.replace('\"', "\\\"")))
+            .map(|d| format!("\"{}\"", d.replace('"', "\\\"")))
             .collect();
         let path_conds_json: Vec<String> = self
             .path_conditions
             .iter()
-            .map(|p| format!("\"{}\"", p.replace('\"', "\\\"")))
+            .map(|p| format!("\"{}\"", p.replace('"', "\\\"")))
             .collect();
         let rewrites_json: Vec<String> = self
             .applied_rewrites
             .iter()
-            .map(|r| format!("\"{}\"", r.replace('\"', "\\\"")))
+            .map(|r| format!("\"{}\"", r.replace('"', "\\\"")))
             .collect();
 
         format!(
-            "{{\n  \"binary_sha256\": \"{}\",\n  \"block_vaddr\": \"{:#x}\",\n  \"raw_bytes\": [{}],\n  \"disassembly\": [{}],\n  \"path_conditions\": [{}],\n  \"original_condition\": \"{}\",\n  \"simplified_condition\": \"{}\",\n  \"resolution\": \"{:?}\",\n  \"status\": \"{:?}\",\n  \"solving_time_ms\": {},\n  \"logic\": \"{}\",\n  \"counterexample\": {},\n  \"applied_rewrites\": [{}]\n}}",
+            "{{\n  \"binary_sha256\": \"{}\",\n  \"block_vaddr\": \"{:#x}\",\n  \"confidence\": \"{:?}\",\n  \"solver_version\": \"{}\",\n  \"git_commit\": \"{}\",\n  \"backend\": \"{}\",\n  \"random_seed\": {},\n  \"timeout_ms\": {},\n  \"memory_budget_mb\": {},\n  \"conflicts_count\": {},\n  \"propagations_count\": {},\n  \"formula_sha256\": \"{}\",\n  \"pre_simplification_ir_sha256\": \"{}\",\n  \"post_simplification_ir_sha256\": \"{}\",\n  \"raw_bytes\": [{}],\n  \"disassembly\": [{}],\n  \"path_conditions\": [{}],\n  \"original_condition\": \"{}\",\n  \"simplified_condition\": \"{}\",\n  \"resolution\": \"{:?}\",\n  \"status\": \"{:?}\",\n  \"solving_time_ms\": {},\n  \"logic\": \"{}\",\n  \"counterexample\": {},\n  \"applied_rewrites\": [{}]\n}}",
             self.binary_sha256,
             self.block_vaddr,
+            self.confidence,
+            self.solver_version,
+            self.git_commit,
+            self.backend,
+            self.random_seed,
+            self.timeout_ms,
+            self.memory_budget_mb,
+            self.conflicts_count,
+            self.propagations_count,
+            self.formula_sha256,
+            self.pre_simplification_ir_sha256,
+            self.post_simplification_ir_sha256,
             hex_bytes.iter().map(|b| format!("\"{}\"", b)).collect::<Vec<_>>().join(", "),
             disasm_json.join(", "),
             path_conds_json.join(", "),
-            self.original_condition_term.replace('\"', "\\\""),
-            self.simplified_condition_term.replace('\"', "\\\""),
+            self.original_condition_term.replace('"', "\\\""),
+            self.simplified_condition_term.replace('"', "\\\""),
             self.resolution,
             self.deobfuscation_status,
             self.metadata.solving_time_ms,
             self.metadata.logic,
-            self.counterexample_model.as_ref().map(|m| format!("\"{}\"", m.replace('\"', "\\\"").replace('\n', "\\n"))).unwrap_or_else(|| "null".to_string()),
+            self.counterexample_model.as_ref().map(|m| format!("\"{}\"", m.replace('"', "\\\"").replace('\n', "\\n"))).unwrap_or_else(|| "null".to_string()),
             rewrites_json.join(", ")
         )
     }
