@@ -192,3 +192,25 @@ All 28 test suites across the workspace pass in release mode:
 | **IR Deobfuscation Pipeline** | 40–50% | **45–52%** | Store compaction, load forwarding, budget limits. |
 | **Binary Analysis End-to-End ELF/PE** | 35–45% | **42–48%** | Segment views, exports, .pdata, delay imports, TLS. |
 | **Enterprise Platform (General Purpose)**| 35–40% | **38–42%** | Permanent fuzz regression corpus, verifiable provenance. |
+
+---
+
+## 8. Remote CI Verification Metrics (GitHub Actions)
+
+- **Workflow Run**: [Run 34959700335](https://github.com/Marax04/SMT-Solver-Rust/actions/runs/34959700335)
+- **Commit**: `da8b585`
+- **Workflow Name**: `CI (Cargo check, test, clippy)`
+- **Overall Status**: **Completed / Success (100% verde)**
+
+| Job Step | Status | Conclusion | Verification Notes |
+|---|---|---|---|
+| **Set up job** | Completed | Success | Ubuntu latest runner environment |
+| **Checkout repository** | Completed | Success | Cloned commit `da8b585` |
+| **Install Rust stable toolchain** | Completed | Success | Rustc 1.85+ stable |
+| **Cache Cargo registry & build artefacts** | Completed | Success | Cache hit |
+| **Install z3** | Completed | Success | libz3-dev installed for differential testing |
+| **Check formatting** | Completed | Success | `cargo fmt --all -- --check` (0 diffs) |
+| **Clippy (deny warnings)** | Completed | Success | `cargo clippy --all-targets --workspace -- -D warnings` (**0 warnings, 0 #[allow]**) |
+| **Run all workspace tests (release)** | Completed | Success | **100% passed across all 28 test suites** |
+| **Verify zero warnings** | Completed | Success | Build log strictly clean |
+| **Complete job** | Completed | Success | Clean exit code 0 |
